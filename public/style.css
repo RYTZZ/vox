@@ -923,6 +923,80 @@ select option {
 }
 
 /* ============================================================
+   TYPING INDICATOR
+   ============================================================ */
+.typing-indicator {
+    min-height: 0;
+    max-height: 0;
+    overflow: hidden;
+    padding: 0 24px;
+    font-size: 0.78rem;
+    color: var(--text3);
+    font-style: italic;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: max-height 0.2s ease, padding 0.2s ease, opacity 0.2s ease;
+    opacity: 0;
+    pointer-events: none;
+    flex-shrink: 0;
+}
+
+.typing-indicator.active {
+    max-height: 32px;
+    padding: 4px 24px 6px;
+    opacity: 1;
+}
+
+/* Animated bouncing dots — 3 separate spans for staggered wave */
+.typing-dots {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    flex-shrink: 0;
+}
+
+.typing-dots span {
+    display: inline-block;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--text3);
+    animation: typing-dot-wave 1.2s ease-in-out infinite;
+}
+
+.typing-dots span:nth-child(1) {
+    animation-delay: 0s;
+}
+
+.typing-dots span:nth-child(2) {
+    animation-delay: 0.2s;
+}
+
+.typing-dots span:nth-child(3) {
+    animation-delay: 0.4s;
+}
+
+.typing-label {
+    color: var(--text3);
+}
+
+@keyframes typing-dot-wave {
+
+    0%,
+    60%,
+    100% {
+        transform: translateY(0);
+        opacity: 0.4;
+    }
+
+    30% {
+        transform: translateY(-4px);
+        opacity: 1;
+    }
+}
+
+/* ============================================================
    ANNOUNCEMENTS PANEL
    ============================================================ */
 #ann-panel {
@@ -1993,39 +2067,38 @@ select option {
 }
 
 /* ============================================================
-   SUGGESTION FAB — Floating Action Button
-   Always visible on the chat page, bottom-right corner
+   SUGGESTION INLINE BUTTON
+   Sits inside .input-row between the textarea and send button.
+   Never overlaps — it is in the normal document flow.
    ============================================================ */
-.suggest-fab {
-    position: fixed;
-    bottom: 28px;
-    right: 28px;
-    width: 54px;
-    height: 54px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, var(--accent), var(--accent2));
-    border: none;
+.suggest-inline-btn {
+    width: 46px;
+    height: 46px;
+    border-radius: 14px;
+    flex-shrink: 0;
+    background: var(--bg3);
+    border: 1px solid var(--border);
     cursor: pointer;
-    font-size: 1.4rem;
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: 0 4px 20px rgba(79, 142, 247, 0.45);
-    z-index: 180;
+    font-size: 1.15rem;
+    color: var(--text2);
     transition: all var(--transition);
     -webkit-tap-highlight-color: transparent;
-    /* Always visible, never hidden */
-    opacity: 1 !important;
-    pointer-events: auto !important;
+    order: -1;
+    /* always leftmost in the input row */
 }
 
-.suggest-fab:hover {
-    transform: scale(1.1) translateY(-2px);
-    box-shadow: 0 8px 28px rgba(79, 142, 247, 0.55);
+.suggest-inline-btn:hover {
+    background: rgba(79, 142, 247, 0.12);
+    border-color: var(--accent);
+    color: var(--accent);
+    transform: translateY(-1px);
 }
 
-.suggest-fab:active {
-    transform: scale(0.95);
+.suggest-inline-btn:active {
+    transform: translateY(0) scale(0.95);
 }
 
 /* Source label inside suggest modal */
@@ -2415,6 +2488,11 @@ select option {
         padding: 10px 12px;
     }
 
+    /* Typing indicator — tighter horizontal padding on mobile */
+    .typing-indicator.active {
+        padding: 4px 12px 6px;
+    }
+
     /* Global chat message actions — on tablets still hover-based but
      switch to always-visible below 600px. On tablets, increase tap target. */
     .msg-action-btn {
@@ -2546,15 +2624,13 @@ select option {
     }
 
     /* ── Global chat messages ──
-     On mobile, msg-actions are hover-based in desktop but
-     we make them ALWAYS VISIBLE here, same as DM/stranger. */
+     On mobile, msg-actions become always-visible static row of icon-only buttons */
     .msg {
         flex-direction: row;
         padding: 8px 10px;
     }
 
     .msg-actions {
-        /* Override the desktop hover/absolute approach */
         position: static !important;
         opacity: 1 !important;
         pointer-events: auto !important;
@@ -2563,42 +2639,48 @@ select option {
         box-shadow: none !important;
         padding: 0 !important;
         display: flex !important;
-        flex-wrap: wrap;
-        gap: 4px;
-        margin-top: 6px;
+        flex-wrap: nowrap;
+        gap: 3px;
+        margin-top: 5px;
     }
 
-    /* Stack message body vertically so actions appear below text */
+    /* Stack message body so actions sit below the text */
     .msg-body {
         display: flex;
         flex-direction: column;
     }
 
-    .msg-action-btn {
+    /* Icon-only action buttons — all three button types */
+    .msg-action-btn,
+    .dm-action-btn,
+    .smsg-action-btn {
+        /* Hide text labels, show only emoji icon */
+        font-size: 1rem;
+        padding: 0;
+        width: 34px;
+        height: 34px;
+        min-width: 34px;
+        min-height: 34px;
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
         background: var(--bg3);
         border: 1px solid var(--border);
-        border-radius: 6px;
-        padding: 5px 10px;
-        font-size: 0.75rem;
-        min-height: 32px;
-        /* tap target */
         opacity: 1 !important;
         pointer-events: auto !important;
+        flex-shrink: 0;
     }
 
-    /* DM and stranger messages — full width on tiny screens */
+    /* Hide the text label span — icon only on mobile */
+    .btn-label {
+        display: none;
+    }
+
+    /* DM and stranger messages — wider on mobile */
     .dm-msg,
     .smsg {
         max-width: 96%;
-    }
-
-    /* DM action buttons — bigger tap targets */
-    .dm-action-btn,
-    .smsg-action-btn {
-        padding: 6px 10px;
-        font-size: 0.75rem;
-        min-height: 32px;
-        border-radius: 8px;
     }
 
     /* Chat header */
@@ -2633,6 +2715,13 @@ select option {
     .send-btn {
         width: 42px;
         height: 42px;
+    }
+
+    .suggest-inline-btn {
+        width: 42px;
+        height: 42px;
+        font-size: 1.05rem;
+        border-radius: 12px;
     }
 
     /* Stranger header */
@@ -2832,8 +2921,25 @@ select option {
     .dm-action-btn,
     .smsg-action-btn,
     .msg-action-btn {
-        font-size: 0.7rem;
-        padding: 5px 7px;
+        width: 30px;
+        height: 30px;
+        min-width: 30px;
+        min-height: 30px;
+        font-size: 0.9rem;
+        border-radius: 6px;
+    }
+
+    /* Compact inline suggest btn on tiny screens */
+    .suggest-inline-btn {
+        width: 38px;
+        height: 38px;
+        font-size: 1rem;
+        border-radius: 10px;
+    }
+
+    .send-btn {
+        width: 38px;
+        height: 38px;
     }
 }
 

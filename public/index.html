@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover" />
-    <title>TikTalk</title>
+    <title>TikTalk — Campus Chat</title>
     <link
         href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&display=swap"
         rel="stylesheet" />
@@ -25,7 +25,7 @@
                 <div class="brand">
                     <div class="brand-logo">💬</div>
                     <h1>TikTalk</h1>
-                    <p>Anonymous real-time university chat</p>
+                    <p>Anonymous real-time campus chat</p>
                 </div>
                 <div class="form-group">
                     <label for="nick-input">Nickname</label>
@@ -123,8 +123,9 @@
                         <button class="btn btn-ghost btn-sm" id="scroll-bottom-btn">↓ Latest</button>
                     </div>
                     <div class="messages-wrap" id="messages-wrap">
-                        <div class="system-msg">Welcome to TikTalk! Be respectful. Report mo agad pag may bastos.</div>
+                        <div class="system-msg">Welcome to TikTalk! Be respectful 🎓</div>
                     </div>
+                    <div class="typing-indicator" id="global-typing-indicator"></div>
                     <div class="chat-input-wrap">
                         <div class="context-banner" id="reply-banner">
                             <span class="context-icon">↩</span>
@@ -132,6 +133,8 @@
                             <button class="context-close" id="reply-close-btn">✕</button>
                         </div>
                         <div class="input-row">
+                            <button class="suggest-inline-btn" id="suggest-fab-btn"
+                                title="Send a Suggestion">💡</button>
                             <textarea class="chat-textarea" id="chat-input" placeholder="Type a message..."
                                 rows="1"></textarea>
                             <button class="send-btn" id="send-chat-btn">➤</button>
@@ -144,7 +147,7 @@
                     <div id="ann-panel">
                         <div class="ann-header">
                             <div class="ann-title">📣 Announcements</div>
-                            <div class="ann-subtitle">Official messages from TikTalk admin</div>
+                            <div class="ann-subtitle">Official messages from the TikTalk admin team</div>
                         </div>
                         <div class="ann-list" id="ann-list">
                             <div class="ann-empty">
@@ -168,6 +171,7 @@
                                 Close</button>
                         </div>
                         <div class="dm-messages" id="dm-messages"></div>
+                        <div class="typing-indicator" id="dm-typing-indicator"></div>
                         <div class="dm-input-wrap">
                             <div class="context-banner" id="dm-reply-banner">
                                 <span class="context-icon">↩</span>
@@ -180,6 +184,8 @@
                                 <button class="context-close" id="dm-edit-cancel-btn">✕ Cancel</button>
                             </div>
                             <div class="input-row">
+                                <button class="suggest-inline-btn" id="suggest-fab-dm-btn"
+                                    title="Send a Suggestion">💡</button>
                                 <textarea class="chat-textarea" id="dm-input" placeholder="Send a private message..."
                                     rows="1"></textarea>
                                 <button class="send-btn" id="send-dm-btn">➤</button>
@@ -196,8 +202,8 @@
                         <div id="stranger-lobby" class="stranger-lobby">
                             <div class="stranger-lobby-icon">🎲</div>
                             <div class="stranger-lobby-title">Anonymous Stranger Matching</div>
-                            <div class="stranger-lobby-sub">Get randomly paired with another student. Both
-                                identities stay anonymous throughout the session.</div>
+                            <div class="stranger-lobby-sub">Get randomly paired with another student. Both identities
+                                stay anonymous throughout the session.</div>
                             <button class="btn btn-primary" id="stranger-find-btn" style="max-width:240px">🔍 Match with
                                 a Stranger</button>
                             <button class="btn btn-ghost btn-sm" id="stranger-lobby-suggest-btn"
@@ -231,7 +237,7 @@
                             </div>
 
                             <div class="stranger-messages" id="stranger-messages"></div>
-
+                            <div class="typing-indicator" id="stranger-typing-indicator"></div>
                             <div class="stranger-input-wrap">
                                 <div class="context-banner" id="stranger-reply-banner">
                                     <span class="context-icon">↩</span>
@@ -244,6 +250,8 @@
                                     <button class="context-close" id="stranger-edit-cancel-btn">✕ Cancel</button>
                                 </div>
                                 <div class="input-row">
+                                    <button class="suggest-inline-btn" id="suggest-fab-stranger-btn"
+                                        title="Send a Suggestion">💡</button>
                                     <textarea class="chat-textarea" id="stranger-input"
                                         placeholder="Say something to your stranger..." rows="1"></textarea>
                                     <button class="send-btn" id="send-stranger-btn">➤</button>
@@ -267,7 +275,15 @@
 
                         <div class="suggest-body">
                             <div class="suggest-form-wrap">
-                                <div class="suggest-form-label">Your suggestion</div>
+                                <div class="suggest-form-label">Campus</div>
+                                <select id="suggest-campus" class="suggest-campus-select">
+                                    <option value="">-- Select your campus --</option>
+                                    <option>Bulan Campus</option>
+                                    <option>Castilla Campus</option>
+                                    <option>Magallanes Campus</option>
+                                    <option>Sorsogon City Campus</option>
+                                </select>
+                                <div class="suggest-form-label" style="margin-top:14px">Your suggestion</div>
                                 <textarea id="suggest-input" class="suggest-textarea"
                                     placeholder="Type your suggestion here… Your identity will never be revealed."
                                     rows="5" maxlength="1000"></textarea>
@@ -308,9 +324,6 @@
                 </div>
 
             </div><!-- /chat-main -->
-
-            <!-- Floating Suggestion Button — always visible on chat page -->
-            <button class="suggest-fab" id="suggest-fab-btn" title="Send a Suggestion">💡</button>
 
         </div><!-- /chat-page -->
 
@@ -365,8 +378,12 @@
                         </div>
                     </div>
                     <div class="admin-section">
-                        <div class="admin-section-title">💡 Suggestion Box <span class="badge"
-                                id="suggest-count-badge">0</span></div>
+                        <div class="admin-section-title" style="display:flex;align-items:center;gap:10px">
+                            💡 Suggestion Box <span class="badge" id="suggest-count-badge">0</span>
+                            <button class="btn btn-ghost btn-xs" id="refresh-suggestions-btn"
+                                title="Reload suggestions from server"
+                                style="margin-left:auto;font-size:0.75rem;padding:4px 10px">↻ Refresh</button>
+                        </div>
                         <div id="suggestions-list">
                             <div class="empty-state">No suggestions yet.</div>
                         </div>
@@ -389,6 +406,16 @@
                     <span class="suggest-modal-source-value" id="suggest-modal-source">Chat</span>
                 </div>
                 <div class="form-group" style="margin-top:12px">
+                    <label for="suggest-modal-campus">Campus</label>
+                    <select id="suggest-modal-campus">
+                        <option value="">-- Select your campus --</option>
+                        <option>Bulan Campus</option>
+                        <option>Castilla Campus</option>
+                        <option>Magallanes Campus</option>
+                        <option>Sorsogon City Campus</option>
+                    </select>
+                </div>
+                <div class="form-group" style="margin-top:10px">
                     <label for="suggest-modal-input">Your suggestion <span class="label-optional">(max 1000
                             chars)</span></label>
                     <textarea id="suggest-modal-input" class="suggest-textarea"
@@ -411,6 +438,16 @@
                 <div class="modal-title">💡 Suggestion Box</div>
                 <div class="modal-sub">Share anonymous feedback directly with the admin. No identity required.</div>
                 <div class="form-group">
+                    <label for="front-suggest-campus">Campus</label>
+                    <select id="front-suggest-campus">
+                        <option value="">-- Select your campus --</option>
+                        <option>Bulan Campus</option>
+                        <option>Castilla Campus</option>
+                        <option>Magallanes Campus</option>
+                        <option>Sorsogon City Campus</option>
+                    </select>
+                </div>
+                <div class="form-group" style="margin-top:10px">
                     <label for="front-suggest-input">Your suggestion <span class="label-optional">(max 1000
                             chars)</span></label>
                     <textarea id="front-suggest-input" class="suggest-textarea" placeholder="Type your suggestion here…"

@@ -19,7 +19,7 @@ const BAN_DURATIONS = {
     'temp-7d': 604_800_000,
 };
 
-const HEART_THRESHOLD_MS = (2 * 60 + 30) * 1000; // 2 minutes and 30 seconds
+const HEART_THRESHOLD_MS = 2.5 * 60 * 1000;  // 2 minutes 30 seconds
 const HEART_COUNTDOWN_SEC = 30;
 
 // ============================================================
@@ -53,6 +53,7 @@ let strangerDurationTimer = null;
 let strangerHeartTimer = null;
 let strangerHeartCountdown = null;
 let strangerMyHeartClicked = false;
+let strangerHeartShown = false;  // ← one-shot flag: heart shown only ONCE per match
 let strangerReplyTo = null;
 let strangerEditingId = null;
 let pendingStrangerEmoji = null;
@@ -60,6 +61,21 @@ let pendingStrangerReport = null;
 
 /** @type {Array} stranger message history for this session */
 const strangerMsgs = [];
+
+// ── Reaction de-duplicate tracking ────────────────────────────────
+// Global chat: server enforces one-react-per-user via react_update broadcasts.
+// DM / Stranger: client-side Sets track which messages THIS user has reacted to.
+// Key: msgId. Stored per-session (cleared on DM switch / stranger session end).
+const myDMReacted = new Set(); // dmMsgId values this user already reacted to
+const myStrangerReacted = new Set(); // stranger msgId values this user already reacted to
+
+// ── Typing indicator state ─────────────────────────────────────
+// Map of nickname -> clearTimeout handle for global chat typers
+const globalTypers = new Map();
+// DM typing: just a single clearTimeout handle (only one person can DM us at a time in practice)
+let dmTypingTimeout = null;
+// Stranger typing: single flag
+let strangerTypingTimeout = null;
 
 let dmMsgCounter = 0;
 let smsgCounter = 0;
@@ -145,10 +161,6 @@ function closeSidebar() {
     document.body.style.overflow = '';
 }
 
-// Auto-close sidebar when a panel is selected on mobile
-const _originalShowPanel = showPanel;
-// We wrap showPanel so mobile sidebar closes after navigation
-
 // ============================================================
 // THEME
 // ============================================================
@@ -186,6 +198,12 @@ function showPanel(name) {
         stranger: 'nav-stranger', suggest: 'nav-suggest'
     }[name];
     if (navId) { const el = document.getElementById(navId); if (el) el.classList.add('active'); }
+
+    // Auto-fill campus on the Suggestion Box panel from user's known campus
+    if (name === 'suggest' && myCampus) {
+        const el = document.getElementById('suggest-campus');
+        if (el && !el.value) el.value = myCampus;
+    }
 
     // Auto-close sidebar on mobile after navigation
     if (window.innerWidth <= 900) closeSidebar();
@@ -225,7 +243,7 @@ function connectWS() {
 
     ws.onopen = () => {
         ws.send(JSON.stringify({ type: 'join', nickname: myNick, campus: myCampus }));
-        toast('Connected to SorSU TikTalk!', 'success');
+        toast('Connected to TikTalk!', 'success');
         // Flush any suggestions queued before connection was ready
         setTimeout(flushSuggestionQueue, 300);
     };
@@ -260,7 +278,7 @@ function handleServerMessage(data) {
         case 'chat': renderChatMsg(data); break;
         case 'system': renderSystemMsg(data.message); break;
         case 'user_list': renderUserList(data.users); break;
-        case 'react': applyReaction(data); break;
+        case 'react_update': applyReaction(data); break;
         case 'announcement': renderAnnouncement(data.announcement); break;
         case 'report_ack': toast('Report submitted to admin.', 'success'); break;
         case 'suggestion_ack': toast('💡 Suggestion sent to admin! Thank you.', 'success'); break;
@@ -294,7 +312,16 @@ function handleServerMessage(data) {
             }
             break;
 
-        // Admin
+        // ── Typing indicators ────────────────────────────────────
+        case 'typing_global': handleGlobalTyping(data.nickname, true); break;
+        case 'stop_typing_global': handleGlobalTyping(data.nickname, false); break;
+        case 'typing_dm': handleDMTyping(data.from, true); break;
+        case 'stop_typing_dm': handleDMTyping(data.from, false); break;
+        case 'typing_stranger': handleStrangerTyping(true); break;
+        case 'stop_typing_stranger': handleStrangerTyping(false); break;
+
+        // Admin events are handled by handleAdminMessage on the adminWs.
+        // These cases are kept as fallback only (e.g. if someone calls wsSend admin_auth on chat ws)
         case 'admin_ok':
             isAdmin = true;
             document.getElementById('admin-login').style.display = 'none';
@@ -305,7 +332,7 @@ function handleServerMessage(data) {
         case 'new_report': appendReport(data.report); break;
         case 'new_suggestion': appendSuggestion(data.suggestion); break;
         case 'admin_data': renderAdminData(data.reports, data.bannedIPs, data.suggestions); break;
-        case 'ban_ok': toast('User banned.', 'success'); wsSend({ type: 'admin_get_data' }); break;
+        case 'ban_ok': toast('User banned.', 'success'); adminWsSend({ type: 'admin_get_data' }); break;
         case 'unban_ok': toast('User unbanned.', 'success'); renderAdminData(null, data.bannedIPs); break;
     }
 }
@@ -314,6 +341,151 @@ function handleBanned(message) {
     alert('⛔ ' + message);
     if (ws) ws.close();
     showPage('front');
+}
+
+// ============================================================
+// TYPING INDICATORS — receive side
+// ============================================================
+
+/** Update the global chat typing indicator bar */
+function handleGlobalTyping(nick, isTyping) {
+    const el = document.getElementById('global-typing-indicator');
+    if (!el) return;
+
+    if (isTyping) {
+        // Clear any existing auto-stop timer for this nick
+        if (globalTypers.has(nick)) clearTimeout(globalTypers.get(nick));
+        // Auto-clear if server misses the stop event (safety net: 4s)
+        const t = setTimeout(() => {
+            globalTypers.delete(nick);
+            updateGlobalTypingDisplay();
+        }, 4000);
+        globalTypers.set(nick, t);
+    } else {
+        if (globalTypers.has(nick)) { clearTimeout(globalTypers.get(nick)); globalTypers.delete(nick); }
+    }
+    updateGlobalTypingDisplay();
+}
+
+/** Build the animated dots HTML string */
+function typingDotsHTML() {
+    return '<span class="typing-dots"><span></span><span></span><span></span></span>';
+}
+
+function updateGlobalTypingDisplay() {
+    const el = document.getElementById('global-typing-indicator');
+    if (!el) return;
+    const typers = Array.from(globalTypers.keys());
+    if (!typers.length) { el.innerHTML = ''; el.classList.remove('active'); return; }
+    const label = typers.length === 1
+        ? `${escapeHTML(typers[0])} is typing`
+        : `${typers.slice(0, 2).map(escapeHTML).join(', ')} ${typers.length > 2 ? `and ${typers.length - 2} others` : 'are'} typing`;
+    el.innerHTML = `${typingDotsHTML()} <span class="typing-label">${label}…</span>`;
+    el.classList.add('active');
+}
+
+/** Update the DM typing indicator */
+function handleDMTyping(from, isTyping) {
+    const el = document.getElementById('dm-typing-indicator');
+    if (!el) return;
+
+    if (dmTypingTimeout) { clearTimeout(dmTypingTimeout); dmTypingTimeout = null; }
+
+    if (isTyping) {
+        el.innerHTML = `${typingDotsHTML()} <span class="typing-label">${escapeHTML(from)} is typing…</span>`;
+        el.classList.add('active');
+        // Auto-clear safety net
+        dmTypingTimeout = setTimeout(() => {
+            el.innerHTML = ''; el.classList.remove('active');
+        }, 4000);
+    } else {
+        el.innerHTML = ''; el.classList.remove('active');
+    }
+}
+
+/** Update the stranger typing indicator */
+function handleStrangerTyping(isTyping) {
+    const el = document.getElementById('stranger-typing-indicator');
+    if (!el) return;
+
+    if (strangerTypingTimeout) { clearTimeout(strangerTypingTimeout); strangerTypingTimeout = null; }
+
+    if (isTyping) {
+        el.innerHTML = `${typingDotsHTML()} <span class="typing-label">Stranger is typing…</span>`;
+        el.classList.add('active');
+        // Auto-clear safety net
+        strangerTypingTimeout = setTimeout(() => {
+            el.innerHTML = ''; el.classList.remove('active');
+        }, 4000);
+    } else {
+        el.innerHTML = ''; el.classList.remove('active');
+    }
+}
+
+// ============================================================
+// TYPING INDICATORS — send side (debounced)
+// Each textarea fires typing_* on first keystroke and
+// stop_typing_* after 2s of inactivity or on message send.
+// ============================================================
+
+let globalTypingSent = false;
+let globalTypingStopTimer = null;
+
+function onGlobalTyping() {
+    if (!myNick || !ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!globalTypingSent) {
+        globalTypingSent = true;
+        wsSend({ type: 'typing_global' });
+    }
+    if (globalTypingStopTimer) clearTimeout(globalTypingStopTimer);
+    globalTypingStopTimer = setTimeout(stopGlobalTyping, 2000);
+}
+
+function stopGlobalTyping() {
+    if (!globalTypingSent) return;
+    globalTypingSent = false;
+    if (globalTypingStopTimer) { clearTimeout(globalTypingStopTimer); globalTypingStopTimer = null; }
+    wsSend({ type: 'stop_typing_global' });
+}
+
+let dmTypingSent = false;
+let dmTypingStopTimer = null;
+
+function onDMTyping() {
+    if (!myNick || !dmTarget || !ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!dmTypingSent) {
+        dmTypingSent = true;
+        wsSend({ type: 'typing_dm', targetNick: dmTarget });
+    }
+    if (dmTypingStopTimer) clearTimeout(dmTypingStopTimer);
+    dmTypingStopTimer = setTimeout(stopDMTyping, 2000);
+}
+
+function stopDMTyping() {
+    if (!dmTypingSent) return;
+    dmTypingSent = false;
+    if (dmTypingStopTimer) { clearTimeout(dmTypingStopTimer); dmTypingStopTimer = null; }
+    if (dmTarget) wsSend({ type: 'stop_typing_dm', targetNick: dmTarget });
+}
+
+let strangerTypingSent = false;
+let strangerTypingStopTimer = null;
+
+function onStrangerTyping() {
+    if (!strangerSessionId || !ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!strangerTypingSent) {
+        strangerTypingSent = true;
+        wsSend({ type: 'typing_stranger' });
+    }
+    if (strangerTypingStopTimer) clearTimeout(strangerTypingStopTimer);
+    strangerTypingStopTimer = setTimeout(stopStrangerTyping, 2000);
+}
+
+function stopStrangerTyping() {
+    if (!strangerTypingSent) return;
+    strangerTypingSent = false;
+    if (strangerTypingStopTimer) { clearTimeout(strangerTypingStopTimer); strangerTypingStopTimer = null; }
+    wsSend({ type: 'stop_typing_stranger' });
 }
 
 // ============================================================
@@ -347,9 +519,9 @@ function renderChatMsg(data) {
       <div class="msg-reactions" id="react-${data.id}"></div>
     </div>
     <div class="msg-actions">
-      <button class="msg-action-btn" data-reply-id="${data.id}" data-reply-nick="${escapeHTML(data.nickname)}" data-reply-msg="${escapeHTML(data.message)}">↩ Reply</button>
-      <button class="msg-action-btn" data-emoji-id="${data.id}">😊 React</button>
-      <button class="msg-action-btn report" data-report-id="${data.id}" data-report-nick="${escapeHTML(data.nickname)}" data-report-campus="${escapeHTML(data.campus)}" data-report-msg="${escapeHTML(data.message)}">🚨 Report</button>
+      <button class="msg-action-btn" data-reply-id="${data.id}" data-reply-nick="${escapeHTML(data.nickname)}" data-reply-msg="${escapeHTML(data.message)}" title="Reply">↩<span class="btn-label"> Reply</span></button>
+      <button class="msg-action-btn" data-emoji-id="${data.id}" title="React">😊<span class="btn-label"> React</span></button>
+      <button class="msg-action-btn report" data-report-id="${data.id}" data-report-nick="${escapeHTML(data.nickname)}" data-report-campus="${escapeHTML(data.campus)}" data-report-msg="${escapeHTML(data.message)}" title="Report">🚨<span class="btn-label"> Report</span></button>
     </div>`;
 
     wrap.appendChild(div);
@@ -377,6 +549,7 @@ function sendChat() {
     const input = document.getElementById('chat-input');
     const msg = input.value.trim();
     if (!msg) return;
+    stopGlobalTyping();
     wsSend({ type: 'chat', message: msg, replyTo, replyPreview });
     input.value = '';
     input.style.height = '';
@@ -434,12 +607,14 @@ function sendEmoji(emoji, msgId) {
 }
 
 function applyReaction(data) {
+    // Receives react_update: { msgId, counts: { emoji: N, ... } }
+    // counts is the authoritative server-computed tally.
     const container = document.getElementById('react-' + data.msgId);
     if (!container) return;
-    if (!container._counts) container._counts = {};
-    container._counts[data.emoji] = (container._counts[data.emoji] || 0) + 1;
     container.innerHTML = '';
-    Object.entries(container._counts).forEach(([emoji, count]) => {
+    if (!data.counts) return;
+    Object.entries(data.counts).forEach(([emoji, count]) => {
+        if (count <= 0) return;
         const pill = document.createElement('div');
         pill.className = 'reaction-pill';
         pill.dataset.emoji = emoji;
@@ -540,6 +715,7 @@ function openDM(nick) {
     document.getElementById('dm-avatar').textContent = nick[0].toUpperCase();
     const msgs = document.getElementById('dm-messages');
     msgs.innerHTML = '';
+    myDMReacted.clear(); // reset per-user react tracking for new DM conversation
     clearDMReply();
     clearDMEdit();
     (dmHistory[nick] || []).forEach(m => msgs.appendChild(buildDMBubble(m)));
@@ -604,7 +780,8 @@ function buildDMBubble(m) {
         const reactBtn = document.createElement('button');
         reactBtn.className = 'dm-action-btn';
         reactBtn.dataset.dmReact = m.id;
-        reactBtn.textContent = '😊 React';
+        reactBtn.title = 'React';
+        reactBtn.innerHTML = '😊<span class="btn-label"> React</span>';
         actionsEl.appendChild(reactBtn);
 
         // Reply — always shown
@@ -613,7 +790,8 @@ function buildDMBubble(m) {
         replyBtn.dataset.dmReply = m.id;
         replyBtn.dataset.dmReplyNick = speakerNick;
         replyBtn.dataset.dmReplyText = m.text;
-        replyBtn.textContent = '↩ Reply';
+        replyBtn.title = 'Reply';
+        replyBtn.innerHTML = '↩<span class="btn-label"> Reply</span>';
         actionsEl.appendChild(replyBtn);
 
         // Edit — only on sent
@@ -621,7 +799,8 @@ function buildDMBubble(m) {
             const editBtn = document.createElement('button');
             editBtn.className = 'dm-action-btn dm-act-edit';
             editBtn.dataset.dmEdit = m.id;
-            editBtn.textContent = '✏️ Edit';
+            editBtn.title = 'Edit';
+            editBtn.innerHTML = '✏️<span class="btn-label"> Edit</span>';
             actionsEl.appendChild(editBtn);
         }
 
@@ -630,7 +809,8 @@ function buildDMBubble(m) {
             const delBtn = document.createElement('button');
             delBtn.className = 'dm-action-btn dm-act-delete';
             delBtn.dataset.dmDelete = m.id;
-            delBtn.textContent = '🗑 Delete';
+            delBtn.title = 'Delete';
+            delBtn.innerHTML = '🗑<span class="btn-label"> Delete</span>';
             actionsEl.appendChild(delBtn);
         }
 
@@ -641,7 +821,8 @@ function buildDMBubble(m) {
             repBtn.dataset.dmReport = m.id;
             repBtn.dataset.dmReportNick = speakerNick;
             repBtn.dataset.dmReportText = m.text;
-            repBtn.textContent = '🚨 Report';
+            repBtn.title = 'Report';
+            repBtn.innerHTML = '🚨<span class="btn-label"> Report</span>';
             actionsEl.appendChild(repBtn);
         }
     }
@@ -704,6 +885,7 @@ function sendDM() {
     msgs.scrollTop = msgs.scrollHeight;
 
     wsSend({ type: 'dm', targetNick: dmTarget, message: msg, dmMsgId: dmId, replyTo: entry.replyTo });
+    stopDMTyping();
     input.value = ''; input.style.height = '';
     clearDMReply();
 }
@@ -783,6 +965,11 @@ function openDMEmojiModal(dmMsgId) {
 function sendDMReaction(emoji, dmMsgId) {
     const id = dmMsgId || pendingDMEmoji;
     if (!id || !dmTarget) return;
+    // BUG 2 FIX: one react per user per DM message (client-side guard).
+    // DM reactions are point-to-point so the server cannot easily enforce
+    // per-user dedup without shared state; we guard on the sender side.
+    if (myDMReacted.has(id)) { pendingDMEmoji = null; return; }
+    myDMReacted.add(id);
     applyDMReaction(dmTarget, id, emoji);
     wsSend({ type: 'dm_react', targetNick: dmTarget, dmMsgId: id, emoji });
     pendingDMEmoji = null;
@@ -909,6 +1096,7 @@ function strangerOnMatched(data) {
     strangerSessionId = data.sessionId;
     strangerStartTime = Date.now();
     strangerMyHeartClicked = false;
+    strangerHeartShown = false;  // reset for new match
     strangerMsgs.length = 0;
     strangerReplyTo = null;
     strangerEditingId = null;
@@ -928,19 +1116,20 @@ function strangerOnMatched(data) {
     document.getElementById('stranger-messages').innerHTML =
         `<div class="system-msg">🎲 You've been matched with an anonymous stranger! Say hi!</div>`;
 
-    // Start duration timer
+    // Start duration timer — ticks every second to update elapsed time display
     if (strangerDurationTimer) clearInterval(strangerDurationTimer);
     strangerDurationTimer = setInterval(() => {
         const elapsed = Date.now() - strangerStartTime;
         document.getElementById('stranger-duration').textContent = formatDuration(elapsed);
 
-        // After 5 minutes, show heart banner
-        if (elapsed >= HEART_THRESHOLD_MS) {
+        // Show heart banner ONCE after threshold — then this check never fires again
+        if (!strangerHeartShown && elapsed >= HEART_THRESHOLD_MS) {
+            strangerHeartShown = true;  // ← one-shot lock; duration timer ignores this branch forever
             const banner = document.getElementById('stranger-heart-banner');
-            if (banner.style.display === 'none') {
-                banner.style.display = 'flex';
-                strangerStartHeartCountdown();
-            }
+            banner.style.display = 'flex';
+            strangerStartHeartCountdown();
+            // No need to stop the duration timer — it still updates the clock display,
+            // but the !strangerHeartShown guard means the heart logic never re-fires.
         }
     }, 1000);
 
@@ -951,16 +1140,19 @@ function strangerStartHeartCountdown() {
     let remaining = HEART_COUNTDOWN_SEC;
     document.getElementById('heart-countdown').textContent = remaining;
 
+    // Clear any stale interval (defensive)
     if (strangerHeartCountdown) clearInterval(strangerHeartCountdown);
+
     strangerHeartCountdown = setInterval(() => {
         remaining--;
         const el = document.getElementById('heart-countdown');
         if (el) el.textContent = remaining;
 
         if (remaining <= 0) {
+            // ── Countdown finished — hide banner PERMANENTLY for this match ──
             clearInterval(strangerHeartCountdown);
             strangerHeartCountdown = null;
-            // Time expired — hide banner, chat continues as stranger chat
+            // strangerHeartShown is already true → the duration timer will never re-show it
             const banner = document.getElementById('stranger-heart-banner');
             if (banner) banner.style.display = 'none';
             toast('💔 Time expired. Continue chatting as strangers.', 'info');
@@ -995,9 +1187,11 @@ function strangerCleanupAll() {
     strangerSessionId = null;
     strangerStartTime = null;
     strangerMyHeartClicked = false;
+    strangerHeartShown = false;  // reset for next match
     strangerReplyTo = null;
     strangerEditingId = null;
     strangerMsgs.length = 0;
+    myStrangerReacted.clear(); // reset per-user react tracking for new stranger session
     if (strangerDurationTimer) { clearInterval(strangerDurationTimer); strangerDurationTimer = null; }
     if (strangerHeartCountdown) { clearInterval(strangerHeartCountdown); strangerHeartCountdown = null; }
 }
@@ -1047,6 +1241,7 @@ function sendStrangerMsg() {
     msgs.scrollTop = msgs.scrollHeight;
 
     wsSend({ type: 'stranger_msg', message: msg, msgId: smsgId, replyTo: entry.replyTo });
+    stopStrangerTyping();
     input.value = ''; input.style.height = '';
     clearStrangerReply();
 }
@@ -1156,6 +1351,9 @@ function openStrangerEmojiModal(msgId) {
 function sendStrangerReaction(emoji, msgId) {
     const id = msgId || pendingStrangerEmoji;
     if (!id || !strangerSessionId) return;
+    // BUG 2 FIX: one react per user per stranger message (client-side guard).
+    if (myStrangerReacted.has(id)) { pendingStrangerEmoji = null; return; }
+    myStrangerReacted.add(id);
     wsSend({ type: 'stranger_react', msgId: id, emoji });
     pendingStrangerEmoji = null;
 }
@@ -1253,27 +1451,31 @@ function buildStrangerBubble(m) {
         const reactBtn = document.createElement('button');
         reactBtn.className = 'smsg-action-btn';
         reactBtn.dataset.sReact = m.id;
-        reactBtn.textContent = '😊 React';
+        reactBtn.title = 'React';
+        reactBtn.innerHTML = '😊<span class="btn-label"> React</span>';
         actionsEl.appendChild(reactBtn);
 
         const replyBtn = document.createElement('button');
         replyBtn.className = 'smsg-action-btn';
         replyBtn.dataset.sReply = m.id;
         replyBtn.dataset.sReplyText = m.text;
-        replyBtn.textContent = '↩ Reply';
+        replyBtn.title = 'Reply';
+        replyBtn.innerHTML = '↩<span class="btn-label"> Reply</span>';
         actionsEl.appendChild(replyBtn);
 
         if (m.sent) {
             const editBtn = document.createElement('button');
             editBtn.className = 'smsg-action-btn smsg-act-edit';
             editBtn.dataset.sEdit = m.id;
-            editBtn.textContent = '✏️ Edit';
+            editBtn.title = 'Edit';
+            editBtn.innerHTML = '✏️<span class="btn-label"> Edit</span>';
             actionsEl.appendChild(editBtn);
 
             const delBtn = document.createElement('button');
             delBtn.className = 'smsg-action-btn smsg-act-delete';
             delBtn.dataset.sDelete = m.id;
-            delBtn.textContent = '🗑 Delete';
+            delBtn.title = 'Delete';
+            delBtn.innerHTML = '🗑<span class="btn-label"> Delete</span>';
             actionsEl.appendChild(delBtn);
         }
 
@@ -1282,7 +1484,8 @@ function buildStrangerBubble(m) {
             repBtn.className = 'smsg-action-btn smsg-act-report';
             repBtn.dataset.sReport = m.id;
             repBtn.dataset.sReportText = m.text;
-            repBtn.textContent = '🚨 Report';
+            repBtn.title = 'Report';
+            repBtn.innerHTML = '🚨<span class="btn-label"> Report</span>';
             actionsEl.appendChild(repBtn);
         }
 
@@ -1321,7 +1524,7 @@ const suggestionQueue = [];
 function flushSuggestionQueue() {
     while (suggestionQueue.length > 0) {
         const item = suggestionQueue.shift();
-        wsSend({ type: 'suggestion', text: item.text, source: item.source });
+        wsSend({ type: 'suggestion', text: item.text, source: item.source, campus: item.campus || '' });
     }
 }
 
@@ -1333,6 +1536,12 @@ function openSuggestModal(source) {
     const srcEl = document.getElementById('suggest-modal-source');
     if (srcEl) srcEl.textContent = source || 'Chat';
 
+    const campusEl = document.getElementById('suggest-modal-campus');
+    if (campusEl) {
+        // Auto-fill from user's campus if they're logged into chat
+        campusEl.value = myCampus || '';
+    }
+
     const input = document.getElementById('suggest-modal-input');
     if (input) {
         input.value = '';
@@ -1340,8 +1549,11 @@ function openSuggestModal(source) {
         if (counter) counter.textContent = '0';
     }
     openModal('suggest-modal');
-    // Auto-focus textarea after modal animation
-    setTimeout(() => { if (input) input.focus(); }, 80);
+    // Focus textarea directly if campus is already set; otherwise focus campus select first
+    setTimeout(() => {
+        if (campusEl && !campusEl.value) campusEl.focus();
+        else if (input) input.focus();
+    }, 80);
 }
 
 /**
@@ -1351,7 +1563,14 @@ function submitSuggestModal() {
     const input = document.getElementById('suggest-modal-input');
     const text = input ? input.value.trim() : '';
     const source = document.getElementById('suggest-modal-source')?.textContent || 'Chat';
+    const campusEl = document.getElementById('suggest-modal-campus');
+    const campus = campusEl ? campusEl.value.trim() : '';
 
+    if (!campus) {
+        toast('Please select your campus.', 'error');
+        if (campusEl) campusEl.focus();
+        return;
+    }
     if (!text) {
         toast('Please type your suggestion first.', 'error');
         if (input) input.focus();
@@ -1360,10 +1579,10 @@ function submitSuggestModal() {
 
     // Try to send immediately; queue if ws not ready
     if (ws && ws.readyState === WebSocket.OPEN) {
-        wsSend({ type: 'suggestion', text, source });
+        wsSend({ type: 'suggestion', text, source, campus });
     } else {
         // Queue it — will be sent on next ws.onopen
-        suggestionQueue.push({ text, source });
+        suggestionQueue.push({ text, source, campus });
         // Also try to connect if not connected yet (e.g., front page)
         if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
             tryAnonymousConnect();
@@ -1374,6 +1593,7 @@ function submitSuggestModal() {
     if (input) input.value = '';
     const counter = document.getElementById('suggest-modal-char');
     if (counter) counter.textContent = '0';
+    if (campusEl) campusEl.value = '';
     closeModal('suggest-modal');
 
     // Also clear the main panel textarea if it exists
@@ -1390,7 +1610,14 @@ function submitSuggestModal() {
 function submitSuggestPanel() {
     const input = document.getElementById('suggest-input');
     const text = input ? input.value.trim() : '';
+    const campusEl = document.getElementById('suggest-campus');
+    const campus = campusEl ? campusEl.value.trim() : '';
 
+    if (!campus) {
+        toast('Please select your campus.', 'error');
+        if (campusEl) campusEl.focus();
+        return;
+    }
     if (!text) {
         toast('Please type your suggestion first.', 'error');
         if (input) input.focus();
@@ -1398,16 +1625,17 @@ function submitSuggestPanel() {
     }
 
     if (ws && ws.readyState === WebSocket.OPEN) {
-        wsSend({ type: 'suggestion', text, source: 'Chat' });
+        wsSend({ type: 'suggestion', text, source: 'Suggestion Box', campus });
         toast('💡 Suggestion sent! Thank you.', 'success');
     } else {
-        suggestionQueue.push({ text, source: 'Chat' });
+        suggestionQueue.push({ text, source: 'Suggestion Box', campus });
         toast('💡 Suggestion queued — will send when connected!', 'info');
     }
 
     if (input) input.value = '';
     const counter = document.getElementById('suggest-char');
     if (counter) counter.textContent = '0';
+    if (campusEl) campusEl.value = '';
 }
 
 /**
@@ -1417,7 +1645,14 @@ function submitSuggestPanel() {
 function submitFrontSuggest() {
     const input = document.getElementById('front-suggest-input');
     const text = input ? input.value.trim() : '';
+    const campusEl = document.getElementById('front-suggest-campus');
+    const campus = campusEl ? campusEl.value.trim() : '';
 
+    if (!campus) {
+        toast('Please select your campus.', 'error');
+        if (campusEl) campusEl.focus();
+        return;
+    }
     if (!text) {
         toast('Please type your suggestion first.', 'error');
         if (input) input.focus();
@@ -1425,9 +1660,9 @@ function submitFrontSuggest() {
     }
 
     if (ws && ws.readyState === WebSocket.OPEN) {
-        wsSend({ type: 'suggestion', text, source: 'Front Page' });
+        wsSend({ type: 'suggestion', text, source: 'Front Page', campus });
     } else {
-        suggestionQueue.push({ text, source: 'Front Page' });
+        suggestionQueue.push({ text, source: 'Front Page', campus });
         if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
             tryAnonymousConnect();
         }
@@ -1435,6 +1670,7 @@ function submitFrontSuggest() {
     }
 
     if (input) input.value = '';
+    if (campusEl) campusEl.value = '';
     closeModal('front-suggest-modal');
 }
 
@@ -1452,7 +1688,7 @@ function tryAnonymousConnect() {
         // Flush queue using this temp connection
         while (suggestionQueue.length > 0) {
             const item = suggestionQueue.shift();
-            tempWs.send(JSON.stringify({ type: 'suggestion', text: item.text, source: item.source }));
+            tempWs.send(JSON.stringify({ type: 'suggestion', text: item.text, source: item.source, campus: item.campus || '' }));
         }
         // Close cleanly after flushing
         setTimeout(() => tempWs.close(), 500);
@@ -1477,7 +1713,13 @@ function appendSuggestion(s) {
     // Source icon map
     const srcIcon = s.source === 'Front Page' ? '🏠'
         : s.source === 'Stranger Matching' ? '🎲'
-            : '🌐';
+            : s.source === 'Suggestion Box' ? '💡'
+                : s.source === 'Direct Message' ? '💬'
+                    : '🌐';
+
+    const campusHTML = s.campus
+        ? `<span class="suggestion-campus">🏫 ${escapeHTML(s.campus)}</span>`
+        : '';
 
     const card = document.createElement('div');
     card.className = 'suggestion-card';
@@ -1485,6 +1727,7 @@ function appendSuggestion(s) {
     card.innerHTML = `
     <div class="suggestion-meta">
       <span class="suggestion-source">${srcIcon} ${escapeHTML(s.source)}</span>
+      ${campusHTML}
       <span class="suggestion-time">${formatDateTime(s.timestamp)}</span>
       <button class="suggestion-review-btn" data-sug-id="${escapeHTML(s.id)}" title="Mark as reviewed">✓ Mark Reviewed</button>
     </div>
@@ -1511,21 +1754,132 @@ function markSuggestionReviewed(sugId) {
 // ============================================================
 // ADMIN LOGIN
 // ============================================================
+
+/** Dedicated WS for admin — separate from the chat ws */
+let adminWs = null;
+let adminSecret = '';
+let adminReconnectTimer = null;
+let adminConnected = false;   // true once admin_ok received on CURRENT connection
+let adminPollTimer = null;    // periodic data refresh
+
+/** Start 30-second polling to keep suggestions in sync */
+function startAdminPolling() {
+    stopAdminPolling();
+    adminPollTimer = setInterval(() => {
+        if (adminConnected) adminWsSend({ type: 'admin_get_data' });
+    }, 30_000);
+}
+
+function stopAdminPolling() {
+    if (adminPollTimer) { clearInterval(adminPollTimer); adminPollTimer = null; }
+}
+
 function adminLogin() {
-    const secret = document.getElementById('admin-secret-input').value;
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-        const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-        ws = new WebSocket(`${proto}://${location.host}`);
-        ws.onopen = () => {
-            ws.send(JSON.stringify({ type: 'join', nickname: 'Admin', campus: 'Admin' }));
-            setTimeout(() => wsSend({ type: 'admin_auth', secret }), 300);
-        };
-        ws.onmessage = (e) => { try { handleServerMessage(JSON.parse(e.data)); } catch { } };
-        ws.onerror = () => toast('Connection error.', 'error');
-    } else {
-        wsSend({ type: 'admin_auth', secret });
+    adminSecret = document.getElementById('admin-secret-input').value.trim();
+    if (!adminSecret) return toast('Enter the admin secret.', 'error');
+    connectAdminWS();
+}
+
+function connectAdminWS() {
+    // Clear any pending reconnect timer
+    if (adminReconnectTimer) { clearTimeout(adminReconnectTimer); adminReconnectTimer = null; }
+
+    // Don't double-connect if already connecting or open
+    if (adminWs && (adminWs.readyState === WebSocket.OPEN || adminWs.readyState === WebSocket.CONNECTING)) return;
+
+    adminConnected = false;
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    adminWs = new WebSocket(`${proto}://${location.host}`);
+
+    adminWs.onopen = () => {
+        // Register this connection with the server so it's tracked in clients map
+        adminWs.send(JSON.stringify({ type: 'join', nickname: '__admin__', campus: 'Admin' }));
+        // Authenticate after a brief delay to ensure join is processed first
+        setTimeout(() => {
+            if (adminWs && adminWs.readyState === WebSocket.OPEN) {
+                adminWs.send(JSON.stringify({ type: 'admin_auth', secret: adminSecret }));
+            }
+        }, 150);
+    };
+
+    adminWs.onmessage = (e) => {
+        // Respond to server keep-alive pings so Render proxy doesn't kill the connection
+        if (e.data === '__ping__') { adminWs.send('__pong__'); return; }
+        try { handleAdminMessage(JSON.parse(e.data)); } catch { }
+    };
+
+    adminWs.onclose = () => {
+        adminConnected = false;
+        // Reconnect if we have a secret and the admin page is still open
+        // Use adminSecret (not isAdmin flag) so reconnect works even before first auth_ok
+        if (adminSecret && document.getElementById('admin-page').classList.contains('active')) {
+            adminReconnectTimer = setTimeout(connectAdminWS, 3000);
+        }
+    };
+
+    adminWs.onerror = () => {
+        if (adminWs) adminWs.close();
+    };
+}
+
+/** Send a message via the dedicated admin WS */
+function adminWsSend(payload) {
+    if (adminWs && adminWs.readyState === WebSocket.OPEN) {
+        adminWs.send(JSON.stringify(payload));
     }
 }
+
+/** Handle messages received on the admin WS */
+function handleAdminMessage(data) {
+    switch (data.type) {
+        case 'admin_ok':
+            isAdmin = true;
+            adminConnected = true;
+            document.getElementById('admin-login').style.display = 'none';
+            document.getElementById('admin-dashboard').style.display = '';
+            renderAdminData(data.reports, data.bannedIPs, data.suggestions);
+            // Request fresh data immediately after auth to catch any suggestions
+            // that arrived between server restart and admin login
+            setTimeout(() => adminWsSend({ type: 'admin_get_data' }), 300);
+            // Start polling every 30s so suggestions never silently disappear
+            startAdminPolling();
+            break;
+        case 'admin_fail':
+            toast('Invalid admin secret.', 'error');
+            isAdmin = false;
+            adminConnected = false;
+            stopAdminPolling();
+            // Clear secret so reconnect doesn't loop with wrong password
+            adminSecret = '';
+            break;
+        case 'new_report':
+            appendReport(data.report);
+            break;
+        case 'new_suggestion':
+            appendSuggestion(data.suggestion);
+            break;
+        case 'admin_data':
+            renderAdminData(data.reports, data.bannedIPs, data.suggestions);
+            break;
+        case 'ban_ok':
+            toast('User banned.', 'success');
+            adminWsSend({ type: 'admin_get_data' });
+            break;
+        case 'unban_ok':
+            toast('User unbanned.', 'success');
+            renderAdminData(null, data.bannedIPs);
+            break;
+        case 'announcement':
+            // Ignore announcements on admin ws (they go to chat ws)
+            break;
+        default:
+            // Silently ignore all other events (chat messages, etc.)
+            break;
+    }
+}
+
+/** Redirect all admin wsSend calls to adminWsSend */
+function adminSend(payload) { adminWsSend(payload); }
 
 // ============================================================
 // ADMIN DATA RENDERING
@@ -1631,16 +1985,16 @@ function executeBan() {
     const sel = document.getElementById('ban-type-select').value;
     const permanent = sel === 'permanent';
     const duration = permanent ? 0 : (BAN_DURATIONS[sel] || 3_600_000);
-    wsSend({ type: 'admin_ban', ip, nickname: nick, permanent, duration });
+    adminWsSend({ type: 'admin_ban', ip, nickname: nick, permanent, duration });
     closeModal('ban-modal');
 }
 
-function unbanIP(ip) { wsSend({ type: 'admin_unban', ip }); }
+function unbanIP(ip) { adminWsSend({ type: 'admin_unban', ip }); }
 
 function postAnnouncement() {
     const text = document.getElementById('ann-input').value.trim();
     if (!text) return;
-    wsSend({ type: 'admin_announce', text });
+    adminWsSend({ type: 'admin_announce', text });
     document.getElementById('ann-input').value = '';
     toast('Announcement posted!', 'success');
 }
@@ -1679,13 +2033,13 @@ document.addEventListener('click', (e) => {
     if (t.id === 'dm-edit-cancel-btn') return cancelDMEdit();
 
     // ── Suggestion Box — ALL ENTRY POINTS ──
-    // FAB button (chat page, always visible)
-    if (t.id === 'suggest-fab-btn') return openSuggestModal(currentPanel === 'stranger' ? 'Stranger Matching' : 'Chat');
+    // Inline suggest buttons in each input row
+    if (t.id === 'suggest-fab-btn') return openSuggestModal('Chat');
+    if (t.id === 'suggest-fab-dm-btn') return openSuggestModal('Direct Message');
+    if (t.id === 'suggest-fab-stranger-btn') return openSuggestModal('Stranger Matching');
     // Universal modal submit
     if (t.id === 'submit-suggest-modal-btn') return submitSuggestModal();
-    // Sidebar nav item → open panel
-    // (handled by navItem closest below, but also allow direct click)
-    // Panel submit button
+    // Panel submit button (full-page suggestion panel)
     if (t.id === 'submit-suggest-btn') return submitSuggestPanel();
     // Front page button → open universal modal with Front Page source
     if (t.id === 'front-suggest-btn') return openSuggestModal('Front Page');
@@ -1804,6 +2158,11 @@ document.addEventListener('click', (e) => {
     if (t.id === 'admin-back-btn') return showPage('front');
     if (t.id === 'admin-exit-btn') return showPage('front');
     if (t.id === 'post-ann-btn') return postAnnouncement();
+    if (t.id === 'refresh-suggestions-btn') {
+        adminWsSend({ type: 'admin_get_data' });
+        toast('Refreshing suggestions…', 'info');
+        return;
+    }
 
     // ── Generic modal close ──
     const closeModalBtn = closest('[data-close-modal]');
@@ -1835,6 +2194,12 @@ document.addEventListener('keydown', (e) => {
 // ============================================================
 document.addEventListener('input', (e) => {
     if (e.target.classList.contains('chat-textarea')) autoResize(e.target);
+
+    // ── Typing indicator events ───────────────────────────────
+    if (e.target.id === 'chat-input') onGlobalTyping();
+    if (e.target.id === 'dm-input') onDMTyping();
+    if (e.target.id === 'stranger-input') onStrangerTyping();
+
     // Suggestion char counters
     if (e.target.id === 'suggest-input') {
         const counter = document.getElementById('suggest-char');

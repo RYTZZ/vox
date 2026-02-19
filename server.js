@@ -10,15 +10,20 @@ const path = require('path');
 const fs = require('fs');
 
 const PORT = process.env.PORT || 3000;
-const ADMIN_SECRET = process.env.ADMIN_SECRET || 'kazee@SorSU_2026';
+const ADMIN_SECRET = process.env.ADMIN_SECRET || 'Kazee@SorSU_2006';
 
 // ── In-memory state ───────────────────────────────────────────
 const clients = new Map(); // ws -> { nickname, campus, ip, id, isAdmin }
 const bannedIPs = new Map(); // ip -> { expiry, permanent, nickname }
 const reports = [];
 const announcements = [];
+const suggestions = [];   // { id, text, source, timestamp }
 const msgLog = new Map(); // global msgId -> { nickname, campus, ip, message }
 const dmMsgLog = new Map(); // dmMsgId -> { senderNick, senderIP, message }
+
+// Per-message reaction tracking: msgId -> Map(userId -> emoji)
+// Enforces one-react-per-user-per-message for global chat.
+const msgReactions = new Map();
 
 // Stranger matching
 const matchQueue = [];        // list of ws waiting for a match
@@ -29,6 +34,7 @@ const heartClicks = new Map(); // sessionId -> Set of ws that clicked heart
 let msgIdCounter = 0;
 let reportIdCounter = 0;
 let annIdCounter = 0;
+let suggestIdCounter = 0;
 
 // ── Static file server ────────────────────────────────────────
 const MIME = { '.html': 'text/html', '.css': 'text/css', '.js': 'application/javascript' };
@@ -178,7 +184,10 @@ wss.on('connection', (ws, req) => {
                 ci.nickname = String(data.nickname || 'Anonymous').slice(0, 30).trim() || 'Anonymous';
                 ci.campus = String(data.campus || 'Unknown').slice(0, 60);
                 send(ws, { type: 'joined', id: clientId, announcements });
-                broadcast({ type: 'system', message: `${ci.nickname} joined the chat.`, timestamp: Date.now() });
+                // Don't broadcast system messages for admin connections or anonymous temp connections
+                if (ci.nickname !== '__admin__' && ci.nickname !== 'Anonymous') {
+                    broadcast({ type: 'system', message: `${ci.nickname} joined the chat.`, timestamp: Date.now() });
+                }
                 broadcastUserList();
                 break;
             }
@@ -189,7 +198,11 @@ wss.on('connection', (ws, req) => {
                 const msgId = `m_${++msgIdCounter}`;
                 const msgText = String(data.message || '').slice(0, 500);
                 msgLog.set(msgId, { nickname: ci.nickname, campus: ci.campus, ip: ci.ip, message: msgText });
-                if (msgLog.size > 1000) msgLog.delete(msgLog.keys().next().value);
+                if (msgLog.size > 1000) {
+                    const oldest = msgLog.keys().next().value;
+                    msgLog.delete(oldest);
+                    msgReactions.delete(oldest); // keep reactions in sync with message log
+                }
                 broadcast({
                     type: 'chat', id: msgId, nickname: ci.nickname, campus: ci.campus,
                     message: msgText, timestamp: Date.now(),
@@ -199,12 +212,33 @@ wss.on('connection', (ws, req) => {
             }
 
             // ── Global reaction ──────────────────────────────────────
+            // BUG 2 FIX: One react per user per message. Server tracks
+            // msgId -> Map(userId -> emoji). Same emoji = toggle off.
+            // Different emoji = replace. Broadcast authoritative counts.
             case 'react': {
                 if (!ci.nickname) return;
                 const emoji = String(data.emoji || '').slice(0, 10);
                 const msgId = String(data.msgId || '');
                 if (!emoji || !msgId) return;
-                broadcast({ type: 'react', msgId, emoji, userId: clientId });
+
+                if (!msgReactions.has(msgId)) msgReactions.set(msgId, new Map());
+                const userMap = msgReactions.get(msgId);
+                const prev = userMap.get(clientId);
+
+                if (prev === emoji) {
+                    // Same emoji clicked again — toggle it off
+                    userMap.delete(clientId);
+                } else {
+                    // New emoji (or replacing old one) — record it
+                    userMap.set(clientId, emoji);
+                }
+
+                // Build authoritative counts: emoji -> count
+                const counts = {};
+                for (const e of userMap.values()) counts[e] = (counts[e] || 0) + 1;
+
+                // Send full authoritative state to everyone so no client drifts
+                broadcast({ type: 'react_update', msgId, counts });
                 break;
             }
 
@@ -322,16 +356,22 @@ wss.on('connection', (ws, req) => {
                 if (!ci.nickname) return;
                 const partner = getPartner(ws);
                 if (!partner) return;
-                const smsgId = `sm_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`;
+                // BUG 1 FIX: Use the client-provided msgId so both users store the
+                // SAME ID. Previously the server discarded data.msgId and generated
+                // its own — User A stored the client-side ID, User B stored the
+                // server-side ID. When User A sent stranger_delete/stranger_edit,
+                // User B couldn't find the message and ignored it (ghost messages).
+                const smsgId = String(data.msgId || '').slice(0, 60) ||
+                    `sm_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`;
                 const smsgText = String(data.message || '').slice(0, 500);
-                // Log for report lookups
+                const ts = Date.now();
                 dmMsgLog.set(smsgId, { senderNick: ci.nickname, senderIP: ci.ip, message: smsgText });
                 if (dmMsgLog.size > 2000) dmMsgLog.delete(dmMsgLog.keys().next().value);
                 send(partner, {
                     type: 'stranger_msg', msgId: smsgId, message: smsgText,
-                    timestamp: Date.now(), replyTo: data.replyTo || null,
+                    timestamp: ts, replyTo: data.replyTo || null,
                 });
-                send(ws, { type: 'stranger_msg_sent', msgId: smsgId, message: smsgText, timestamp: Date.now(), replyTo: data.replyTo || null });
+                send(ws, { type: 'stranger_msg_sent', msgId: smsgId, message: smsgText, timestamp: ts, replyTo: data.replyTo || null });
                 break;
             }
 
@@ -423,7 +463,7 @@ wss.on('connection', (ws, req) => {
             case 'admin_auth': {
                 if (data.secret === ADMIN_SECRET) {
                     ci.isAdmin = true;
-                    send(ws, { type: 'admin_ok', reports, bannedIPs: Array.from(bannedIPs.entries()) });
+                    send(ws, { type: 'admin_ok', reports, bannedIPs: Array.from(bannedIPs.entries()), suggestions });
                 } else {
                     send(ws, { type: 'admin_fail' });
                 }
@@ -462,9 +502,71 @@ wss.on('connection', (ws, req) => {
                 break;
             }
 
+            // ── Suggestion Box ───────────────────────────────────────
+            case 'suggestion': {
+                const sugText = String(data.text || '').slice(0, 1000).trim();
+                const sugSource = String(data.source || 'Chat').slice(0, 50);
+                const sugCampus = String(data.campus || '').slice(0, 60);
+                if (!sugText) return;
+                const sug = {
+                    id: `sg_${++suggestIdCounter}`,
+                    text: sugText,
+                    source: sugSource,
+                    campus: sugCampus,
+                    timestamp: Date.now(),
+                };
+                suggestions.push(sug);
+                // Deliver instantly to all connected admins
+                notifyAdmins({ type: 'new_suggestion', suggestion: sug });
+                // Acknowledge to sender only
+                send(ws, { type: 'suggestion_ack' });
+                break;
+            }
+
+            // ── Typing indicators ────────────────────────────────────
+            // Global chat typing
+            case 'typing_global': {
+                if (!ci.nickname) return;
+                broadcast({ type: 'typing_global', nickname: ci.nickname }, ws);
+                break;
+            }
+            case 'stop_typing_global': {
+                if (!ci.nickname) return;
+                broadcast({ type: 'stop_typing_global', nickname: ci.nickname }, ws);
+                break;
+            }
+            // DM typing
+            case 'typing_dm': {
+                if (!ci.nickname) return;
+                const targetNick = String(data.targetNick || '');
+                const targetWsDm = findWsByNick(targetNick);
+                if (targetWsDm) send(targetWsDm, { type: 'typing_dm', from: ci.nickname });
+                break;
+            }
+            case 'stop_typing_dm': {
+                if (!ci.nickname) return;
+                const targetNick = String(data.targetNick || '');
+                const targetWsDm = findWsByNick(targetNick);
+                if (targetWsDm) send(targetWsDm, { type: 'stop_typing_dm', from: ci.nickname });
+                break;
+            }
+            // Stranger typing
+            case 'typing_stranger': {
+                if (!ci.nickname) return;
+                const partner = getPartner(ws);
+                if (partner) send(partner, { type: 'typing_stranger' });
+                break;
+            }
+            case 'stop_typing_stranger': {
+                if (!ci.nickname) return;
+                const partner = getPartner(ws);
+                if (partner) send(partner, { type: 'stop_typing_stranger' });
+                break;
+            }
+
             case 'admin_get_data': {
                 if (!ci.isAdmin) return;
-                send(ws, { type: 'admin_data', reports, bannedIPs: Array.from(bannedIPs.entries()) });
+                send(ws, { type: 'admin_data', reports, bannedIPs: Array.from(bannedIPs.entries()), suggestions });
                 break;
             }
         }
@@ -472,7 +574,7 @@ wss.on('connection', (ws, req) => {
 
     ws.on('close', () => {
         const info = clients.get(ws);
-        if (info && info.nickname) {
+        if (info && info.nickname && info.nickname !== '__admin__' && info.nickname !== 'Anonymous') {
             broadcast({ type: 'system', message: `${info.nickname} left the chat.`, timestamp: Date.now() });
         }
         // Clean up stranger state
