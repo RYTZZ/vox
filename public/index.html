@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover" />
     <title>TikTalk</title>
     <link
         href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&display=swap"
@@ -49,7 +49,10 @@
                             <div class="toggle-knob"></div>
                         </div>
                     </div>
-                    <button class="btn btn-ghost btn-sm" id="go-admin-btn">🛡 Admin</button>
+                    <div style="display:flex;gap:8px">
+                        <button class="btn btn-ghost btn-sm" id="front-suggest-btn">💡 Suggest</button>
+                        <button class="btn btn-ghost btn-sm" id="go-admin-btn">🛡 Admin</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -63,8 +66,11 @@
             <div class="sidebar" id="sidebar">
                 <div class="sidebar-header">
                     <span class="sidebar-brand">TikTalk</span>
-                    <div class="toggle on" id="chat-theme-toggle">
-                        <div class="toggle-knob"></div>
+                    <div style="display:flex;align-items:center;gap:8px">
+                        <div class="toggle on" id="chat-theme-toggle">
+                            <div class="toggle-knob"></div>
+                        </div>
+                        <button class="sidebar-close-btn" id="sidebar-close-btn" aria-label="Close menu">✕</button>
                     </div>
                 </div>
                 <div class="sidebar-nav">
@@ -73,6 +79,8 @@
                     <div class="nav-item" id="nav-ann" data-panel="ann"><span class="icon">📣</span> Announcements</div>
                     <div class="nav-item" id="nav-stranger" data-panel="stranger"><span class="icon">🎲</span> Match
                         Stranger</div>
+                    <div class="nav-item" id="nav-suggest" data-panel="suggest"><span class="icon">💡</span> Suggestion
+                        Box</div>
                 </div>
                 <div id="dm-nav-section" style="display:none">
                     <div class="sidebar-section-title">Direct Messages</div>
@@ -94,6 +102,16 @@
 
             <!-- Main area -->
             <div class="chat-main">
+                <!-- Mobile-only top bar -->
+                <div class="mobile-topbar" id="mobile-topbar">
+                    <button class="hamburger-btn" id="hamburger-btn" aria-label="Open menu">☰</button>
+                    <span class="mobile-topbar-title">TikTalk</span>
+                    <div class="toggle on" id="mobile-theme-toggle">
+                        <div class="toggle-knob"></div>
+                    </div>
+                </div>
+                <!-- Sidebar overlay (mobile) -->
+                <div class="sidebar-overlay" id="sidebar-overlay"></div>
 
                 <!-- Global Chat Panel -->
                 <div class="chat-panel active" id="panel-global">
@@ -105,7 +123,7 @@
                         <button class="btn btn-ghost btn-sm" id="scroll-bottom-btn">↓ Latest</button>
                     </div>
                     <div class="messages-wrap" id="messages-wrap">
-                        <div class="system-msg">Welcome to TikTalk! Be respectful</div>
+                        <div class="system-msg">Welcome to TikTalk! Be respectful. Report mo agad pag may bastos.</div>
                     </div>
                     <div class="chat-input-wrap">
                         <div class="context-banner" id="reply-banner">
@@ -178,10 +196,12 @@
                         <div id="stranger-lobby" class="stranger-lobby">
                             <div class="stranger-lobby-icon">🎲</div>
                             <div class="stranger-lobby-title">Anonymous Stranger Matching</div>
-                            <div class="stranger-lobby-sub">Get randomly paired with another User. Both
+                            <div class="stranger-lobby-sub">Get randomly paired with another student. Both
                                 identities stay anonymous throughout the session.</div>
                             <button class="btn btn-primary" id="stranger-find-btn" style="max-width:240px">🔍 Match with
                                 a Stranger</button>
+                            <button class="btn btn-ghost btn-sm" id="stranger-lobby-suggest-btn"
+                                style="margin-top:8px">💡 Send a Suggestion</button>
                         </div>
 
                         <!-- Searching state -->
@@ -234,7 +254,64 @@
                     </div>
                 </div>
 
+                <!-- Suggestion Box Panel -->
+                <div class="chat-panel" id="panel-suggest">
+                    <div class="suggest-area">
+                        <div class="suggest-header">
+                            <div class="suggest-header-icon">💡</div>
+                            <div>
+                                <div class="suggest-title">Suggestion Box</div>
+                                <div class="suggest-subtitle">Share ideas, feedback, or concerns — 100% anonymous</div>
+                            </div>
+                        </div>
+
+                        <div class="suggest-body">
+                            <div class="suggest-form-wrap">
+                                <div class="suggest-form-label">Your suggestion</div>
+                                <textarea id="suggest-input" class="suggest-textarea"
+                                    placeholder="Type your suggestion here… Your identity will never be revealed."
+                                    rows="5" maxlength="1000"></textarea>
+                                <div class="suggest-meta-row">
+                                    <span class="suggest-char-count"><span id="suggest-char">0</span>/1000</span>
+                                    <button class="btn btn-primary suggest-submit-btn" id="submit-suggest-btn">
+                                        💡 Send Suggestion
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="suggest-info-cards">
+                                <div class="suggest-info-card">
+                                    <div class="suggest-info-icon">🔒</div>
+                                    <div>
+                                        <div class="suggest-info-title">Fully Anonymous</div>
+                                        <div class="suggest-info-sub">No name, no account — nothing is tracked</div>
+                                    </div>
+                                </div>
+                                <div class="suggest-info-card">
+                                    <div class="suggest-info-icon">⚡</div>
+                                    <div>
+                                        <div class="suggest-info-title">Realtime Delivery</div>
+                                        <div class="suggest-info-sub">Goes straight to the Admin Dashboard instantly
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="suggest-info-card">
+                                    <div class="suggest-info-icon">📋</div>
+                                    <div>
+                                        <div class="suggest-info-title">Reviewed by Admin</div>
+                                        <div class="suggest-info-sub">All suggestions are read and considered</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
             </div><!-- /chat-main -->
+
+            <!-- Floating Suggestion Button — always visible on chat page -->
+            <button class="suggest-fab" id="suggest-fab-btn" title="Send a Suggestion">💡</button>
+
         </div><!-- /chat-page -->
 
         <!-- ======================================================
@@ -287,6 +364,13 @@
                             <div class="empty-state">No active bans.</div>
                         </div>
                     </div>
+                    <div class="admin-section">
+                        <div class="admin-section-title">💡 Suggestion Box <span class="badge"
+                                id="suggest-count-badge">0</span></div>
+                        <div id="suggestions-list">
+                            <div class="empty-state">No suggestions yet.</div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -294,6 +378,53 @@
         <!-- ======================================================
        MODALS (all inside #app)
        ====================================================== -->
+
+        <!-- Universal Suggestion Box Modal (works on ALL pages, no WS required to open) -->
+        <div class="modal-overlay" id="suggest-modal">
+            <div class="modal">
+                <div class="modal-title">💡 Suggestion Box</div>
+                <div class="modal-sub">Your suggestion is sent anonymously to the admin. No identity required.</div>
+                <div class="suggest-modal-source-row">
+                    <span class="suggest-modal-source-label">Sending from:</span>
+                    <span class="suggest-modal-source-value" id="suggest-modal-source">Chat</span>
+                </div>
+                <div class="form-group" style="margin-top:12px">
+                    <label for="suggest-modal-input">Your suggestion <span class="label-optional">(max 1000
+                            chars)</span></label>
+                    <textarea id="suggest-modal-input" class="suggest-textarea"
+                        placeholder="Type your suggestion here… Your identity is never revealed." rows="5"
+                        maxlength="1000"></textarea>
+                    <div style="text-align:right;margin-top:4px;font-size:0.75rem;color:var(--text3)">
+                        <span id="suggest-modal-char">0</span>/1000
+                    </div>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn-ghost btn-sm" data-close-modal="suggest-modal">Cancel</button>
+                    <button class="btn btn-primary btn-sm" id="submit-suggest-modal-btn">💡 Send Suggestion</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Front Page: Suggestion Box floating modal (kept for backward compat, now just opens universal modal) -->
+        <div class="modal-overlay" id="front-suggest-modal">
+            <div class="modal">
+                <div class="modal-title">💡 Suggestion Box</div>
+                <div class="modal-sub">Share anonymous feedback directly with the admin. No identity required.</div>
+                <div class="form-group">
+                    <label for="front-suggest-input">Your suggestion <span class="label-optional">(max 1000
+                            chars)</span></label>
+                    <textarea id="front-suggest-input" class="suggest-textarea" placeholder="Type your suggestion here…"
+                        rows="4" maxlength="1000"></textarea>
+                    <div style="text-align:right;margin-top:4px;font-size:0.75rem;color:var(--text3)">
+                        <span id="front-suggest-char">0</span>/1000
+                    </div>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn-ghost btn-sm" data-close-modal="front-suggest-modal">Cancel</button>
+                    <button class="btn btn-primary btn-sm" id="submit-front-suggest-btn">💡 Send Suggestion</button>
+                </div>
+            </div>
+        </div>
 
         <!-- Global: React -->
         <div class="modal-overlay" id="emoji-modal">
@@ -312,7 +443,18 @@
                 <div class="modal-sub">Source: <strong>Global Chat</strong> · Sent to admin for review.</div>
                 <div class="report-preview-box" id="report-preview-box"></div>
                 <div class="form-group" style="margin-top:14px">
-                    <label for="report-reason">Reason <span class="label-optional">(optional)</span></label>
+                    <label for="report-category">Category</label>
+                    <select id="report-category">
+                        <option>Harassment or bullying</option>
+                        <option>Hate speech</option>
+                        <option>Spam</option>
+                        <option>Inappropriate content</option>
+                        <option>Impersonation</option>
+                        <option>Other</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="report-reason">Additional details <span class="label-optional">(optional)</span></label>
                     <textarea id="report-reason" class="report-textarea"
                         placeholder="Describe why you're reporting this message…" rows="3"></textarea>
                 </div>
@@ -340,7 +482,19 @@
                 <div class="modal-sub">Source: <strong>Direct Message</strong> · Sent to admin with sender's IP.</div>
                 <div class="report-preview-box" id="dm-report-preview-box"></div>
                 <div class="form-group" style="margin-top:14px">
-                    <label for="dm-report-reason">Reason <span class="label-optional">(optional)</span></label>
+                    <label for="dm-report-category">Category</label>
+                    <select id="dm-report-category">
+                        <option>Harassment or bullying</option>
+                        <option>Hate speech</option>
+                        <option>Spam</option>
+                        <option>Inappropriate content</option>
+                        <option>Impersonation</option>
+                        <option>Other</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="dm-report-reason">Additional details <span
+                            class="label-optional">(optional)</span></label>
                     <textarea id="dm-report-reason" class="report-textarea"
                         placeholder="Describe why you're reporting this message…" rows="3"></textarea>
                 </div>
@@ -368,7 +522,18 @@
                 <div class="modal-sub">Source: <strong>Anonymous Stranger Chat</strong> · Sent to admin dashboard.</div>
                 <div class="report-preview-box" id="stranger-report-preview-box"></div>
                 <div class="form-group" style="margin-top:14px">
-                    <label for="stranger-report-reason">Reason <span class="label-optional">(optional)</span></label>
+                    <label for="stranger-report-category">Category</label>
+                    <select id="stranger-report-category">
+                        <option>Harassment or bullying</option>
+                        <option>Hate speech</option>
+                        <option>Spam</option>
+                        <option>Inappropriate content</option>
+                        <option>Other</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="stranger-report-reason">Additional details <span
+                            class="label-optional">(optional)</span></label>
                     <textarea id="stranger-report-reason" class="report-textarea"
                         placeholder="Describe why you're reporting this message…" rows="3"></textarea>
                 </div>
@@ -386,7 +551,18 @@
                 <div class="modal-sub">Source: <strong>Announcements</strong> · Sent to admin dashboard.</div>
                 <div class="report-preview-box" id="ann-report-preview-box"></div>
                 <div class="form-group" style="margin-top:14px">
-                    <label for="ann-report-reason">Reason <span class="label-optional">(optional)</span></label>
+                    <label for="ann-report-category">Category</label>
+                    <select id="ann-report-category">
+                        <option>Inappropriate content</option>
+                        <option>Misinformation</option>
+                        <option>Spam</option>
+                        <option>Harassment or bullying</option>
+                        <option>Other</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="ann-report-reason">Additional details <span
+                            class="label-optional">(optional)</span></label>
                     <textarea id="ann-report-reason" class="report-textarea"
                         placeholder="Describe why you're reporting this announcement…" rows="3"></textarea>
                 </div>

@@ -1993,23 +1993,883 @@ select option {
 }
 
 /* ============================================================
-   RESPONSIVE
+   SUGGESTION FAB — Floating Action Button
+   Always visible on the chat page, bottom-right corner
    ============================================================ */
-@media (max-width:768px) {
+.suggest-fab {
+    position: fixed;
+    bottom: 28px;
+    right: 28px;
+    width: 54px;
+    height: 54px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border: none;
+    cursor: pointer;
+    font-size: 1.4rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 20px rgba(79, 142, 247, 0.45);
+    z-index: 180;
+    transition: all var(--transition);
+    -webkit-tap-highlight-color: transparent;
+    /* Always visible, never hidden */
+    opacity: 1 !important;
+    pointer-events: auto !important;
+}
+
+.suggest-fab:hover {
+    transform: scale(1.1) translateY(-2px);
+    box-shadow: 0 8px 28px rgba(79, 142, 247, 0.55);
+}
+
+.suggest-fab:active {
+    transform: scale(0.95);
+}
+
+/* Source label inside suggest modal */
+.suggest-modal-source-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.78rem;
+    color: var(--text2);
+    margin-bottom: 4px;
+}
+
+.suggest-modal-source-label {
+    font-weight: 600;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 0.7rem;
+}
+
+.suggest-modal-source-value {
+    background: rgba(79, 142, 247, 0.12);
+    color: var(--accent);
+    padding: 2px 10px;
+    border-radius: 99px;
+    font-size: 0.78rem;
+    font-weight: 600;
+}
+
+/* ============================================================
+   SUGGESTION BOX PANEL
+   ============================================================ */
+.suggest-area {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow-y: auto;
+    padding: 32px 28px;
+}
+
+.suggest-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 28px;
+    flex-shrink: 0;
+}
+
+.suggest-header-icon {
+    font-size: 2.4rem;
+    width: 56px;
+    height: 56px;
+    background: linear-gradient(135deg, rgba(79, 142, 247, 0.15), rgba(167, 139, 250, 0.15));
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.suggest-title {
+    font-family: var(--font-head);
+    font-size: 1.3rem;
+    font-weight: 800;
+}
+
+.suggest-subtitle {
+    font-size: 0.82rem;
+    color: var(--text2);
+    margin-top: 3px;
+}
+
+.suggest-body {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    flex: 1;
+}
+
+.suggest-form-wrap {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 20px;
+}
+
+.suggest-form-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text2);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    margin-bottom: 10px;
+}
+
+.suggest-textarea {
+    width: 100%;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    color: var(--text);
+    font-family: var(--font-body);
+    font-size: 0.9rem;
+    padding: 12px 16px;
+    outline: none;
+    resize: vertical;
+    min-height: 120px;
+    max-height: 260px;
+    line-height: 1.6;
+    transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+.suggest-textarea:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(79, 142, 247, 0.12);
+}
+
+.suggest-textarea::placeholder {
+    color: var(--text3);
+}
+
+.suggest-meta-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 10px;
+    gap: 12px;
+}
+
+.suggest-char-count {
+    font-size: 0.75rem;
+    color: var(--text3);
+}
+
+.suggest-submit-btn {
+    width: auto !important;
+    padding: 10px 22px !important;
+}
+
+/* Info cards row */
+.suggest-info-cards {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.suggest-info-card {
+    flex: 1;
+    min-width: 160px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.suggest-info-icon {
+    font-size: 1.4rem;
+    flex-shrink: 0;
+}
+
+.suggest-info-title {
+    font-size: 0.82rem;
+    font-weight: 600;
+    margin-bottom: 2px;
+}
+
+.suggest-info-sub {
+    font-size: 0.75rem;
+    color: var(--text2);
+    line-height: 1.4;
+}
+
+/* ============================================================
+   SUGGESTION CARDS — ADMIN DASHBOARD
+   ============================================================ */
+.suggestion-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent2);
+    border-radius: 14px;
+    padding: 16px 18px;
+    margin-bottom: 10px;
+    animation: msgIn 0.3s ease;
+    transition: opacity 0.2s, border-left-color 0.2s;
+}
+
+.suggestion-card.reviewed {
+    opacity: 0.55;
+    border-left-color: var(--accent3);
+}
+
+.suggestion-meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+}
+
+.suggestion-source {
+    font-size: 0.75rem;
+    font-weight: 600;
+    background: rgba(167, 139, 250, 0.12);
+    color: var(--accent2);
+    padding: 3px 10px;
+    border-radius: 99px;
+}
+
+.suggestion-time {
+    font-size: 0.72rem;
+    color: var(--text3);
+}
+
+.suggestion-review-btn {
+    margin-left: auto;
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text2);
+    border-radius: 6px;
+    padding: 3px 10px;
+    font-size: 0.72rem;
+    cursor: pointer;
+    font-family: var(--font-body);
+    transition: all 0.15s;
+}
+
+.suggestion-review-btn:hover {
+    background: rgba(52, 211, 153, 0.1);
+    color: var(--accent3);
+    border-color: var(--accent3);
+}
+
+.suggestion-card.reviewed .suggestion-review-btn {
+    color: var(--accent3);
+    border-color: var(--accent3);
+}
+
+.suggestion-text {
+    font-size: 0.88rem;
+    color: var(--text);
+    line-height: 1.6;
+    word-break: break-word;
+    white-space: pre-wrap;
+}
+
+/* ============================================================
+   MOBILE TOPBAR (hidden on desktop, shown on mobile)
+   ============================================================ */
+.mobile-topbar {
+    display: none;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    z-index: 10;
+}
+
+.mobile-topbar-title {
+    font-family: var(--font-head);
+    font-weight: 800;
+    font-size: 1rem;
+    flex: 1;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.hamburger-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    width: 36px;
+    height: 36px;
+    font-size: 1.1rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.sidebar-close-btn {
+    display: none;
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text2);
+    border-radius: 8px;
+    width: 30px;
+    height: 30px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    -webkit-tap-highlight-color: transparent;
+}
+
+/* Dark overlay behind open sidebar on mobile */
+.sidebar-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 49;
+    backdrop-filter: blur(2px);
+}
+
+.sidebar-overlay.show {
+    display: block;
+}
+
+/* ============================================================
+   RESPONSIVE — TABLET  (≤ 900px)
+   ============================================================ */
+@media (max-width: 900px) {
+
+    /* Sidebar becomes an off-canvas drawer */
     .sidebar {
-        width: 0;
-        overflow: hidden;
-        position: absolute;
+        position: fixed;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 280px;
         z-index: 50;
-        height: 100vh;
+        transform: translateX(-100%);
+        transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+        overflow-y: auto;
     }
 
     .sidebar.open {
-        width: 260px;
+        transform: translateX(0);
+        box-shadow: 4px 0 32px rgba(0, 0, 0, 0.5);
     }
 
+    /* Show close ✕ button inside sidebar on mobile */
+    .sidebar-close-btn {
+        display: flex;
+    }
+
+    /* Mobile top bar visible */
+    .mobile-topbar {
+        display: flex;
+    }
+
+    /* Remove the always-visible chat-theme-toggle from sidebar header
+     (we have the mobile-theme-toggle in the topbar instead) */
+    #chat-theme-toggle {
+        display: none;
+    }
+
+    /* Chat main takes full width */
+    .chat-main {
+        width: 100%;
+    }
+
+    /* Front card — smaller padding */
+    .front-card {
+        padding: 32px 24px;
+        margin: 16px;
+        max-width: 100%;
+    }
+
+    /* Messages wrap — tighter horizontal padding */
+    .messages-wrap {
+        padding: 12px 12px;
+    }
+
+    /* Chat input wrap */
+    .chat-input-wrap {
+        padding: 10px 12px;
+    }
+
+    .dm-input-wrap {
+        padding: 10px 12px;
+    }
+
+    .stranger-input-wrap {
+        padding: 10px 12px;
+    }
+
+    /* Global chat message actions — on tablets still hover-based but
+     switch to always-visible below 600px. On tablets, increase tap target. */
+    .msg-action-btn {
+        padding: 6px 10px;
+        font-size: 0.8rem;
+    }
+
+    /* DM & stranger messages — wider on tablet */
     .dm-msg,
     .smsg {
-        max-width: 92%;
+        max-width: 88%;
     }
+
+    /* Admin page */
+    .admin-wrap {
+        padding: 20px 16px;
+    }
+
+    /* Modals — full bleed on small screens */
+    .modal-overlay {
+        padding: 12px;
+        align-items: flex-end;
+    }
+
+    .modal {
+        border-radius: 20px 20px 0 0;
+        max-height: 92dvh;
+        overflow-y: auto;
+        padding: 24px 20px;
+    }
+
+    /* Suggestion panel */
+    .suggest-area {
+        padding: 20px 16px;
+    }
+
+    .suggest-info-cards {
+        flex-direction: column;
+    }
+
+    /* Stranger chat header */
+    .stranger-chat-header {
+        padding: 10px 14px;
+    }
+
+    .stranger-messages {
+        padding: 12px 12px;
+    }
+
+    .dm-messages {
+        padding: 12px 12px;
+    }
+
+    /* Heart banner */
+    .stranger-heart-banner {
+        padding: 10px 14px;
+        gap: 10px;
+    }
+
+    .heart-banner-text {
+        font-size: 0.88rem;
+    }
+
+    /* Announcement panel */
+    #ann-panel {
+        padding: 16px;
+    }
+
+    /* Toast — full width on mobile */
+    #toast-container {
+        top: auto;
+        bottom: 80px;
+        right: 12px;
+        left: 12px;
+    }
+
+    .toast {
+        max-width: 100%;
+    }
+}
+
+/* ============================================================
+   RESPONSIVE — MOBILE  (≤ 600px)
+   ============================================================ */
+@media (max-width: 600px) {
+
+    /* Base font size bump for readability */
+    body {
+        font-size: 15px;
+    }
+
+    /* Remove overflow:hidden so iOS doesn't clip */
+    html,
+    body {
+        height: 100%;
+        overflow: hidden;
+    }
+
+    #app {
+        height: 100dvh;
+    }
+
+    /* Front page */
+    #front-page {
+        padding: 0;
+        justify-content: flex-start;
+        padding-top: 40px;
+    }
+
+    .front-card {
+        margin: 12px;
+        padding: 28px 20px;
+        border-radius: 18px;
+    }
+
+    .brand h1 {
+        font-size: 1.6rem;
+    }
+
+    .brand-logo {
+        width: 52px;
+        height: 52px;
+        font-size: 22px;
+    }
+
+    .front-footer {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    /* ── Global chat messages ──
+     On mobile, msg-actions are hover-based in desktop but
+     we make them ALWAYS VISIBLE here, same as DM/stranger. */
+    .msg {
+        flex-direction: row;
+        padding: 8px 10px;
+    }
+
+    .msg-actions {
+        /* Override the desktop hover/absolute approach */
+        position: static !important;
+        opacity: 1 !important;
+        pointer-events: auto !important;
+        background: none !important;
+        border: none !important;
+        box-shadow: none !important;
+        padding: 0 !important;
+        display: flex !important;
+        flex-wrap: wrap;
+        gap: 4px;
+        margin-top: 6px;
+    }
+
+    /* Stack message body vertically so actions appear below text */
+    .msg-body {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .msg-action-btn {
+        background: var(--bg3);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 5px 10px;
+        font-size: 0.75rem;
+        min-height: 32px;
+        /* tap target */
+        opacity: 1 !important;
+        pointer-events: auto !important;
+    }
+
+    /* DM and stranger messages — full width on tiny screens */
+    .dm-msg,
+    .smsg {
+        max-width: 96%;
+    }
+
+    /* DM action buttons — bigger tap targets */
+    .dm-action-btn,
+    .smsg-action-btn {
+        padding: 6px 10px;
+        font-size: 0.75rem;
+        min-height: 32px;
+        border-radius: 8px;
+    }
+
+    /* Chat header */
+    .chat-header {
+        padding: 10px 12px;
+    }
+
+    .chat-title {
+        font-size: 0.92rem;
+    }
+
+    /* DM header */
+    .dm-header {
+        padding: 10px 12px;
+        gap: 8px;
+    }
+
+    .dm-title {
+        font-size: 0.9rem;
+    }
+
+    /* Input row */
+    .input-row {
+        gap: 6px;
+    }
+
+    .chat-textarea {
+        font-size: 0.88rem;
+        padding: 10px 12px;
+    }
+
+    .send-btn {
+        width: 42px;
+        height: 42px;
+    }
+
+    /* Stranger header */
+    .stranger-chat-header {
+        padding: 8px 12px;
+    }
+
+    .stranger-chat-title {
+        font-size: 0.9rem;
+    }
+
+    /* Heart banner — stack vertically */
+    .stranger-heart-banner {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+        padding: 12px;
+    }
+
+    .btn-heart {
+        width: 100%;
+        justify-content: center;
+        padding: 12px;
+    }
+
+    /* Modals — slide up from bottom, full width */
+    .modal-overlay {
+        padding: 0;
+        align-items: flex-end;
+    }
+
+    .modal {
+        border-radius: 20px 20px 0 0;
+        padding: 24px 18px 32px;
+        max-height: 88dvh;
+        overflow-y: auto;
+        width: 100%;
+        max-width: 100%;
+        /* Safe area for notch/home indicator */
+        padding-bottom: max(32px, env(safe-area-inset-bottom));
+    }
+
+    .modal-actions {
+        flex-direction: column-reverse;
+        gap: 8px;
+    }
+
+    .modal-actions .btn {
+        width: 100%;
+        justify-content: center;
+        padding: 13px;
+        font-size: 0.9rem;
+    }
+
+    /* Emoji grid — bigger buttons on mobile */
+    .emoji-btn {
+        font-size: 1.6rem;
+        padding: 6px;
+        min-width: 44px;
+        min-height: 44px;
+    }
+
+    /* Suggestion box */
+    .suggest-area {
+        padding: 16px 12px;
+    }
+
+    .suggest-header {
+        gap: 10px;
+        margin-bottom: 16px;
+    }
+
+    .suggest-header-icon {
+        width: 44px;
+        height: 44px;
+        font-size: 1.8rem;
+    }
+
+    .suggest-title {
+        font-size: 1.1rem;
+    }
+
+    .suggest-info-cards {
+        flex-direction: column;
+    }
+
+    .suggest-meta-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+
+    .suggest-submit-btn {
+        width: 100% !important;
+    }
+
+    /* Stranger lobby */
+    .stranger-lobby {
+        padding: 24px 16px;
+        gap: 12px;
+    }
+
+    .stranger-lobby-title {
+        font-size: 1.2rem;
+    }
+
+    .stranger-lobby-icon {
+        font-size: 3rem;
+    }
+
+    /* Admin page */
+    .admin-wrap {
+        padding: 16px 12px;
+    }
+
+    .admin-login-wrap {
+        padding: 40px 16px;
+    }
+
+    .admin-login-form {
+        flex-direction: column;
+    }
+
+    .admin-header {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .report-meta {
+        gap: 6px;
+    }
+
+    .ip-block {
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    /* Toast — above keyboard area */
+    #toast-container {
+        bottom: 72px;
+        right: 10px;
+        left: 10px;
+        top: auto;
+    }
+
+    .toast {
+        font-size: 0.82rem;
+        padding: 10px 14px;
+    }
+
+    /* Online section hidden on tiny screens to save space — but still accessible */
+    .sidebar-section-title,
+    .online-list {
+        font-size: 0.82rem;
+    }
+
+    /* Buttons in sidebar — bigger tap */
+    .nav-item {
+        padding: 11px 12px;
+        font-size: 0.88rem;
+        min-height: 44px;
+    }
+
+    /* Leave chat button */
+    #leave-chat-btn {
+        padding: 10px;
+        font-size: 0.85rem;
+    }
+
+    /* Announcement panel */
+    #ann-panel {
+        padding: 12px;
+    }
+
+    .ann-card {
+        padding: 14px;
+    }
+}
+
+/* ============================================================
+   RESPONSIVE — VERY SMALL  (≤ 360px)
+   ============================================================ */
+@media (max-width: 360px) {
+    .front-card {
+        padding: 24px 16px;
+        margin: 8px;
+    }
+
+    .brand h1 {
+        font-size: 1.4rem;
+    }
+
+    .modal {
+        padding: 20px 14px 28px;
+    }
+
+    .dm-action-btn,
+    .smsg-action-btn,
+    .msg-action-btn {
+        font-size: 0.7rem;
+        padding: 5px 7px;
+    }
+}
+
+/* ============================================================
+   RESPONSIVE — LANDSCAPE PHONES  (short + wide)
+   ============================================================ */
+@media (max-height: 500px) and (max-width: 900px) {
+    .modal {
+        max-height: 95dvh;
+        border-radius: 16px;
+    }
+
+    .modal-overlay {
+        align-items: center;
+        padding: 8px;
+    }
+
+    .stranger-lobby {
+        padding: 16px;
+        gap: 8px;
+    }
+
+    .stranger-lobby-icon {
+        font-size: 2rem;
+    }
+}
+
+/* ============================================================
+   SAFE AREA — Notch & Home Bar (iOS)
+   ============================================================ */
+.chat-input-wrap,
+.dm-input-wrap,
+.stranger-input-wrap {
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+}
+
+.sidebar {
+    padding-bottom: env(safe-area-inset-bottom);
 }

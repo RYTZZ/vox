@@ -489,3 +489,13 @@ server.listen(PORT, () => {
     console.log(`✅ SorSU TikTalk running on http://localhost:${PORT}`);
     console.log(`🛡  Admin secret: ${ADMIN_SECRET}`);
 });
+
+// Keep-alive: ping all connected clients every 30s to prevent
+// Render free tier from sleeping and to detect dead connections.
+setInterval(() => {
+    wss.clients.forEach(ws => {
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.ping();
+        }
+    });
+}, 30_000);

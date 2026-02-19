@@ -19,7 +19,7 @@ const BAN_DURATIONS = {
     'temp-7d': 604_800_000,
 };
 
-const HEART_THRESHOLD_MS = 5 * 60 * 1000;  // 5 minutes
+const HEART_THRESHOLD_MS = (2 * 60 + 30) * 1000; // 2 minutes and 30 seconds
 const HEART_COUNTDOWN_SEC = 30;
 
 // ============================================================
@@ -131,6 +131,25 @@ function openModal(id) { document.getElementById(id).classList.add('show'); }
 function closeModal(id) { document.getElementById(id).classList.remove('show'); }
 
 // ============================================================
+// MOBILE SIDEBAR TOGGLE
+// ============================================================
+function openSidebar() {
+    document.getElementById('sidebar').classList.add('open');
+    document.getElementById('sidebar-overlay').classList.add('show');
+    document.body.style.overflow = 'hidden';
+}
+
+function closeSidebar() {
+    document.getElementById('sidebar').classList.remove('open');
+    document.getElementById('sidebar-overlay').classList.remove('show');
+    document.body.style.overflow = '';
+}
+
+// Auto-close sidebar when a panel is selected on mobile
+const _originalShowPanel = showPanel;
+// We wrap showPanel so mobile sidebar closes after navigation
+
+// ============================================================
 // THEME
 // ============================================================
 function toggleTheme() {
@@ -157,12 +176,19 @@ function showPanel(name) {
     currentPanel = name;
 
     const panelId = {
-        global: 'panel-global', ann: 'panel-ann', dm: 'panel-dm', stranger: 'panel-stranger'
+        global: 'panel-global', ann: 'panel-ann', dm: 'panel-dm',
+        stranger: 'panel-stranger', suggest: 'panel-suggest'
     }[name];
     if (panelId) document.getElementById(panelId).classList.add('active');
 
-    const navId = { global: 'nav-global', ann: 'nav-ann', stranger: 'nav-stranger' }[name];
+    const navId = {
+        global: 'nav-global', ann: 'nav-ann',
+        stranger: 'nav-stranger', suggest: 'nav-suggest'
+    }[name];
     if (navId) { const el = document.getElementById(navId); if (el) el.classList.add('active'); }
+
+    // Auto-close sidebar on mobile after navigation
+    if (window.innerWidth <= 900) closeSidebar();
 }
 
 // ============================================================
@@ -200,6 +226,8 @@ function connectWS() {
     ws.onopen = () => {
         ws.send(JSON.stringify({ type: 'join', nickname: myNick, campus: myCampus }));
         toast('Connected to SorSU TikTalk!', 'success');
+        // Flush any suggestions queued before connection was ready
+        setTimeout(flushSuggestionQueue, 300);
     };
 
     ws.onmessage = (e) => {
@@ -213,6 +241,11 @@ function connectWS() {
     };
 
     ws.onerror = () => ws.close();
+
+    // Respond to server keep-alive pings (Render free tier prevention)
+    ws.addEventListener('message', (e) => {
+        if (e.data === '__ping__') ws.send('__pong__');
+    });
 }
 
 function wsSend(payload) {
@@ -230,6 +263,7 @@ function handleServerMessage(data) {
         case 'react': applyReaction(data); break;
         case 'announcement': renderAnnouncement(data.announcement); break;
         case 'report_ack': toast('Report submitted to admin.', 'success'); break;
+        case 'suggestion_ack': toast('💡 Suggestion sent to admin! Thank you.', 'success'); break;
         case 'error': toast(data.message, 'error'); break;
         case 'banned': handleBanned(data.message); break;
 
@@ -265,11 +299,12 @@ function handleServerMessage(data) {
             isAdmin = true;
             document.getElementById('admin-login').style.display = 'none';
             document.getElementById('admin-dashboard').style.display = '';
-            renderAdminData(data.reports, data.bannedIPs);
+            renderAdminData(data.reports, data.bannedIPs, data.suggestions);
             break;
         case 'admin_fail': toast('Invalid admin secret.', 'error'); break;
         case 'new_report': appendReport(data.report); break;
-        case 'admin_data': renderAdminData(data.reports, data.bannedIPs); break;
+        case 'new_suggestion': appendSuggestion(data.suggestion); break;
+        case 'admin_data': renderAdminData(data.reports, data.bannedIPs, data.suggestions); break;
         case 'ban_ok': toast('User banned.', 'success'); wsSend({ type: 'admin_get_data' }); break;
         case 'unban_ok': toast('User unbanned.', 'success'); renderAdminData(null, data.bannedIPs); break;
     }
@@ -429,14 +464,16 @@ function openReportModal(msgId, nick, campus, message) {
 
 function submitReport() {
     if (!pendingReport) return;
-    const reason = document.getElementById('report-reason').value.trim();
+    const category = document.getElementById('report-category').value;
+    const details = document.getElementById('report-reason').value.trim();
+    const reason = details ? `${category} — ${details}` : category;
     wsSend({
         type: 'report',
         msgId: pendingReport.msgId,
         targetNick: pendingReport.nick,
         targetCampus: pendingReport.campus,
         message: pendingReport.message,
-        reason: reason || '(no reason provided)',
+        reason,
         source: pendingReport.source || 'Global Chat',
     });
     closeModal('report-modal');
@@ -510,6 +547,8 @@ function openDM(nick) {
     showPanel('dm');
     updateDMNav(nick);
     document.getElementById('dm-input').focus();
+    // Auto-close sidebar on mobile
+    if (window.innerWidth <= 900) closeSidebar();
 }
 
 function updateDMNav(nick) {
@@ -770,13 +809,15 @@ function openDMReportModal(dmMsgId, nick, text) {
 
 function submitDMReport() {
     if (!pendingDMReport) return;
-    const reason = document.getElementById('dm-report-reason').value.trim();
+    const category = document.getElementById('dm-report-category').value;
+    const details = document.getElementById('dm-report-reason').value.trim();
+    const reason = details ? `${category} — ${details}` : category;
     wsSend({
         type: 'dm_report',
         dmMsgId: pendingDMReport.dmMsgId,
         targetNick: pendingDMReport.nick,
         message: pendingDMReport.text,
-        reason: reason || '(no reason provided)',
+        reason,
         source: 'Direct Message',
     });
     closeModal('dm-report-modal');
@@ -1130,12 +1171,14 @@ function openStrangerReportModal(msgId, text) {
 
 function submitStrangerReport() {
     if (!pendingStrangerReport) return;
-    const reason = document.getElementById('stranger-report-reason').value.trim();
+    const category = document.getElementById('stranger-report-category').value;
+    const details = document.getElementById('stranger-report-reason').value.trim();
+    const reason = details ? `${category} — ${details}` : category;
     wsSend({
         type: 'stranger_report',
         msgId: pendingStrangerReport.msgId,
         message: pendingStrangerReport.text,
-        reason: reason || '(no reason provided)',
+        reason,
         source: 'Anonymous Stranger Chat',
     });
     closeModal('stranger-report-modal');
@@ -1258,6 +1301,214 @@ function refreshStrangerBubble(msgId) {
 }
 
 // ============================================================
+// SUGGESTION BOX
+// ============================================================
+
+// ============================================================
+// SUGGESTION BOX — ROBUST IMPLEMENTATION
+// Queue-based: suggestions are stored locally if ws isn't ready,
+// then flushed automatically when the connection opens.
+// Works on ALL pages regardless of connection state.
+// ============================================================
+
+/** Pending suggestions to send once WS connects */
+const suggestionQueue = [];
+
+/**
+ * Flush any queued suggestions as soon as WS is open.
+ * Called from connectWS() onopen handler.
+ */
+function flushSuggestionQueue() {
+    while (suggestionQueue.length > 0) {
+        const item = suggestionQueue.shift();
+        wsSend({ type: 'suggestion', text: item.text, source: item.source });
+    }
+}
+
+/**
+ * Open the universal suggestion modal from anywhere.
+ * @param {string} source — which page/context opened it
+ */
+function openSuggestModal(source) {
+    const srcEl = document.getElementById('suggest-modal-source');
+    if (srcEl) srcEl.textContent = source || 'Chat';
+
+    const input = document.getElementById('suggest-modal-input');
+    if (input) {
+        input.value = '';
+        const counter = document.getElementById('suggest-modal-char');
+        if (counter) counter.textContent = '0';
+    }
+    openModal('suggest-modal');
+    // Auto-focus textarea after modal animation
+    setTimeout(() => { if (input) input.focus(); }, 80);
+}
+
+/**
+ * Submit from the universal modal.
+ */
+function submitSuggestModal() {
+    const input = document.getElementById('suggest-modal-input');
+    const text = input ? input.value.trim() : '';
+    const source = document.getElementById('suggest-modal-source')?.textContent || 'Chat';
+
+    if (!text) {
+        toast('Please type your suggestion first.', 'error');
+        if (input) input.focus();
+        return;
+    }
+
+    // Try to send immediately; queue if ws not ready
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        wsSend({ type: 'suggestion', text, source });
+    } else {
+        // Queue it — will be sent on next ws.onopen
+        suggestionQueue.push({ text, source });
+        // Also try to connect if not connected yet (e.g., front page)
+        if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+            tryAnonymousConnect();
+        }
+        toast('💡 Suggestion queued — will send when connected!', 'info');
+    }
+
+    if (input) input.value = '';
+    const counter = document.getElementById('suggest-modal-char');
+    if (counter) counter.textContent = '0';
+    closeModal('suggest-modal');
+
+    // Also clear the main panel textarea if it exists
+    const panelInput = document.getElementById('suggest-input');
+    if (panelInput) panelInput.value = '';
+    const panelCounter = document.getElementById('suggest-char');
+    if (panelCounter) panelCounter.textContent = '0';
+}
+
+/**
+ * Submit from the Suggestion Box panel (full page form).
+ * Same logic — queues if not connected.
+ */
+function submitSuggestPanel() {
+    const input = document.getElementById('suggest-input');
+    const text = input ? input.value.trim() : '';
+
+    if (!text) {
+        toast('Please type your suggestion first.', 'error');
+        if (input) input.focus();
+        return;
+    }
+
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        wsSend({ type: 'suggestion', text, source: 'Chat' });
+        toast('💡 Suggestion sent! Thank you.', 'success');
+    } else {
+        suggestionQueue.push({ text, source: 'Chat' });
+        toast('💡 Suggestion queued — will send when connected!', 'info');
+    }
+
+    if (input) input.value = '';
+    const counter = document.getElementById('suggest-char');
+    if (counter) counter.textContent = '0';
+}
+
+/**
+ * Submit from the legacy front-page modal (kept for compat).
+ * Queues if ws not connected.
+ */
+function submitFrontSuggest() {
+    const input = document.getElementById('front-suggest-input');
+    const text = input ? input.value.trim() : '';
+
+    if (!text) {
+        toast('Please type your suggestion first.', 'error');
+        if (input) input.focus();
+        return;
+    }
+
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        wsSend({ type: 'suggestion', text, source: 'Front Page' });
+    } else {
+        suggestionQueue.push({ text, source: 'Front Page' });
+        if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+            tryAnonymousConnect();
+        }
+        toast('💡 Suggestion queued — will send when connected!', 'info');
+    }
+
+    if (input) input.value = '';
+    closeModal('front-suggest-modal');
+}
+
+/**
+ * Open an anonymous WS connection purely to drain the suggestion queue.
+ * Only used when user submits from the front page before entering chat.
+ */
+function tryAnonymousConnect() {
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const tempWs = new WebSocket(`${proto}://${location.host}`);
+    tempWs.onopen = () => {
+        // Send anonymous join so server accepts the connection
+        tempWs.send(JSON.stringify({ type: 'join', nickname: 'Anonymous', campus: 'Unknown' }));
+        // Flush queue using this temp connection
+        while (suggestionQueue.length > 0) {
+            const item = suggestionQueue.shift();
+            tempWs.send(JSON.stringify({ type: 'suggestion', text: item.text, source: item.source }));
+        }
+        // Close cleanly after flushing
+        setTimeout(() => tempWs.close(), 500);
+        toast('💡 Suggestion sent! Thank you.', 'success');
+    };
+    tempWs.onerror = () => {
+        toast('Could not connect. Suggestion saved for when you enter chat.', 'error');
+    };
+}
+
+/**
+ * Append a single suggestion card to the admin suggestions list.
+ * Called both on realtime new_suggestion and on admin login.
+ */
+function appendSuggestion(s) {
+    const list = document.getElementById('suggestions-list');
+    if (!list) return;
+
+    const placeholder = list.querySelector('.empty-state');
+    if (placeholder) placeholder.remove();
+
+    // Source icon map
+    const srcIcon = s.source === 'Front Page' ? '🏠'
+        : s.source === 'Stranger Matching' ? '🎲'
+            : '🌐';
+
+    const card = document.createElement('div');
+    card.className = 'suggestion-card';
+    card.id = 'sug-' + s.id;
+    card.innerHTML = `
+    <div class="suggestion-meta">
+      <span class="suggestion-source">${srcIcon} ${escapeHTML(s.source)}</span>
+      <span class="suggestion-time">${formatDateTime(s.timestamp)}</span>
+      <button class="suggestion-review-btn" data-sug-id="${escapeHTML(s.id)}" title="Mark as reviewed">✓ Mark Reviewed</button>
+    </div>
+    <div class="suggestion-text">${escapeHTML(s.text)}</div>`;
+
+    list.prepend(card);
+
+    // Update badge count
+    const badge = document.getElementById('suggest-count-badge');
+    if (badge) badge.textContent = parseInt(badge.textContent || 0) + 1;
+}
+
+/**
+ * Toggle the "reviewed" visual state on a suggestion card.
+ */
+function markSuggestionReviewed(sugId) {
+    const card = document.getElementById('sug-' + sugId);
+    if (!card) return;
+    const already = card.classList.toggle('reviewed');
+    const btn = card.querySelector('[data-sug-id]');
+    if (btn) btn.textContent = already ? '✓ Reviewed' : '✓ Mark Reviewed';
+}
+
+// ============================================================
 // ADMIN LOGIN
 // ============================================================
 function adminLogin() {
@@ -1279,7 +1530,7 @@ function adminLogin() {
 // ============================================================
 // ADMIN DATA RENDERING
 // ============================================================
-function renderAdminData(reports, bannedIPs) {
+function renderAdminData(reports, bannedIPs, suggestions) {
     if (reports != null) {
         const list = document.getElementById('reports-list');
         list.innerHTML = '';
@@ -1292,6 +1543,16 @@ function renderAdminData(reports, bannedIPs) {
         list.innerHTML = '';
         if (!bannedIPs.length) { list.innerHTML = '<div class="empty-state">No active bans.</div>'; }
         else { bannedIPs.forEach(([ip, info]) => appendBanRow(ip, info)); }
+    }
+    if (suggestions != null) {
+        const list = document.getElementById('suggestions-list');
+        if (list) {
+            list.innerHTML = '';
+            const badge = document.getElementById('suggest-count-badge');
+            if (badge) badge.textContent = 0;
+            if (!suggestions.length) { list.innerHTML = '<div class="empty-state">No suggestions yet.</div>'; }
+            else { suggestions.forEach(s => appendSuggestion(s)); }
+        }
     }
 }
 
@@ -1393,6 +1654,13 @@ document.addEventListener('click', (e) => {
     const t = e.target;
     const closest = (sel) => t.closest(sel);
 
+    // ── Mobile sidebar ──
+    if (t.id === 'hamburger-btn') return openSidebar();
+    if (t.id === 'sidebar-close-btn') return closeSidebar();
+    if (t.id === 'sidebar-overlay') return closeSidebar();
+    if (closest('#sidebar-overlay')) return closeSidebar();
+    if (closest('#mobile-theme-toggle')) return toggleTheme();
+
     // ── Theme ──
     if (closest('#theme-toggle') || closest('#chat-theme-toggle')) return toggleTheme();
 
@@ -1409,6 +1677,26 @@ document.addEventListener('click', (e) => {
     if (t.id === 'close-dm-btn') return closeDM();
     if (t.id === 'dm-reply-close-btn') return clearDMReply();
     if (t.id === 'dm-edit-cancel-btn') return cancelDMEdit();
+
+    // ── Suggestion Box — ALL ENTRY POINTS ──
+    // FAB button (chat page, always visible)
+    if (t.id === 'suggest-fab-btn') return openSuggestModal(currentPanel === 'stranger' ? 'Stranger Matching' : 'Chat');
+    // Universal modal submit
+    if (t.id === 'submit-suggest-modal-btn') return submitSuggestModal();
+    // Sidebar nav item → open panel
+    // (handled by navItem closest below, but also allow direct click)
+    // Panel submit button
+    if (t.id === 'submit-suggest-btn') return submitSuggestPanel();
+    // Front page button → open universal modal with Front Page source
+    if (t.id === 'front-suggest-btn') return openSuggestModal('Front Page');
+    // Legacy front page modal submit
+    if (t.id === 'submit-front-suggest-btn') return submitFrontSuggest();
+    // Stranger lobby button → open universal modal
+    if (t.id === 'stranger-lobby-suggest-btn') return openSuggestModal('Stranger Matching');
+
+    // Mark suggestion reviewed (admin dashboard)
+    const sugReviewBtn = closest('[data-sug-id]');
+    if (sugReviewBtn) return markSuggestionReviewed(sugReviewBtn.dataset.sugId);
 
     // ── Stranger controls ──
     if (t.id === 'stranger-find-btn') return strangerFind();
@@ -1533,6 +1821,13 @@ document.addEventListener('keydown', (e) => {
     if (e.target.id === 'stranger-input') return handleStrangerKey(e);
     if (e.target.id === 'admin-secret-input' && e.key === 'Enter') return adminLogin();
     if (e.target.id === 'ann-input' && e.key === 'Enter') return postAnnouncement();
+    // Ctrl+Enter or Cmd+Enter to submit suggestion from modal
+    if ((e.target.id === 'suggest-modal-input' || e.target.id === 'suggest-input' || e.target.id === 'front-suggest-input') && e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        if (e.target.id === 'suggest-modal-input') return submitSuggestModal();
+        if (e.target.id === 'suggest-input') return submitSuggestPanel();
+        if (e.target.id === 'front-suggest-input') return submitFrontSuggest();
+    }
 });
 
 // ============================================================
@@ -1540,4 +1835,17 @@ document.addEventListener('keydown', (e) => {
 // ============================================================
 document.addEventListener('input', (e) => {
     if (e.target.classList.contains('chat-textarea')) autoResize(e.target);
+    // Suggestion char counters
+    if (e.target.id === 'suggest-input') {
+        const counter = document.getElementById('suggest-char');
+        if (counter) counter.textContent = e.target.value.length;
+    }
+    if (e.target.id === 'suggest-modal-input') {
+        const counter = document.getElementById('suggest-modal-char');
+        if (counter) counter.textContent = e.target.value.length;
+    }
+    if (e.target.id === 'front-suggest-input') {
+        const counter = document.getElementById('front-suggest-char');
+        if (counter) counter.textContent = e.target.value.length;
+    }
 });
